@@ -100,7 +100,7 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(undo_action)
         
         redo_action = QAction("&Redo", self)
-        redo_action.setShortcut(QKeySequence.StandardKey.Redo)
+        redo_action.setShortcut(QKeySequence("Ctrl+Y"))
         redo_action.triggered.connect(self._on_redo)
         edit_menu.addAction(redo_action)
         
