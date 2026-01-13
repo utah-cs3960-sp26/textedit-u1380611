@@ -29,7 +29,7 @@ class MainWindow(QMainWindow):
         self._theme_manager = ThemeManager()
         
         self._setup_ui()
-        self._theme_manager.apply_theme(Theme.DARK)
+        self._theme_manager.apply_theme(Theme.MIDNIGHT_BLUE)
         self._setup_menus()
         self._setup_status_bar()
         self._connect_signals()
@@ -153,7 +153,7 @@ class MainWindow(QMainWindow):
         
         self._dark_theme_action = QAction("&Dark", self)
         self._dark_theme_action.setCheckable(True)
-        self._dark_theme_action.setChecked(True)
+        self._dark_theme_action.setChecked(False)
         self._dark_theme_action.triggered.connect(lambda: self._on_theme_changed(Theme.DARK))
         themes_menu.addAction(self._dark_theme_action)
         
@@ -162,6 +162,18 @@ class MainWindow(QMainWindow):
         self._light_theme_action.setChecked(False)
         self._light_theme_action.triggered.connect(lambda: self._on_theme_changed(Theme.LIGHT))
         themes_menu.addAction(self._light_theme_action)
+        
+        self._aquamarine_theme_action = QAction("&Aquamarine", self)
+        self._aquamarine_theme_action.setCheckable(True)
+        self._aquamarine_theme_action.setChecked(False)
+        self._aquamarine_theme_action.triggered.connect(lambda: self._on_theme_changed(Theme.AQUAMARINE))
+        themes_menu.addAction(self._aquamarine_theme_action)
+        
+        self._midnight_blue_theme_action = QAction("&Midnight Blue", self)
+        self._midnight_blue_theme_action.setCheckable(True)
+        self._midnight_blue_theme_action.setChecked(True)
+        self._midnight_blue_theme_action.triggered.connect(lambda: self._on_theme_changed(Theme.MIDNIGHT_BLUE))
+        themes_menu.addAction(self._midnight_blue_theme_action)
         
         view_menu.addSeparator()
         
@@ -506,6 +518,8 @@ class MainWindow(QMainWindow):
         self._theme_manager.apply_theme(theme)
         self._dark_theme_action.setChecked(theme == Theme.DARK)
         self._light_theme_action.setChecked(theme == Theme.LIGHT)
+        self._aquamarine_theme_action.setChecked(theme == Theme.AQUAMARINE)
+        self._midnight_blue_theme_action.setChecked(theme == Theme.MIDNIGHT_BLUE)
     
     def _on_swap_panes(self):
         """Handle View > Swap Split Panes."""

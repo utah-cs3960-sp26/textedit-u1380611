@@ -5,7 +5,11 @@ Tests for the ThemeManager module.
 import pytest
 from PySide6.QtWidgets import QApplication
 
-from editor.theme_manager import ThemeManager, Theme, DARK_STYLESHEET, LIGHT_STYLESHEET
+from editor.theme_manager import (
+    ThemeManager, Theme, 
+    DARK_STYLESHEET, LIGHT_STYLESHEET,
+    AQUAMARINE_STYLESHEET, MIDNIGHT_BLUE_STYLESHEET
+)
 
 
 @pytest.fixture(scope="session")
@@ -34,6 +38,14 @@ class TestThemeEnum:
     def test_light_theme_value(self):
         """Light theme has correct value."""
         assert Theme.LIGHT.value == "light"
+    
+    def test_aquamarine_theme_value(self):
+        """Aquamarine theme has correct value."""
+        assert Theme.AQUAMARINE.value == "aquamarine"
+    
+    def test_midnight_blue_theme_value(self):
+        """Midnight Blue theme has correct value."""
+        assert Theme.MIDNIGHT_BLUE.value == "midnight_blue"
 
 
 class TestThemeManager:
@@ -66,6 +78,16 @@ class TestThemeManager:
         theme_manager.apply_theme(Theme.LIGHT)
         theme_manager.toggle_theme()
         assert theme_manager.current_theme == Theme.DARK
+    
+    def test_apply_aquamarine_theme(self, theme_manager, qapp):
+        """Can apply aquamarine theme."""
+        theme_manager.apply_theme(Theme.AQUAMARINE)
+        assert theme_manager.current_theme == Theme.AQUAMARINE
+    
+    def test_apply_midnight_blue_theme(self, theme_manager, qapp):
+        """Can apply midnight blue theme."""
+        theme_manager.apply_theme(Theme.MIDNIGHT_BLUE)
+        assert theme_manager.current_theme == Theme.MIDNIGHT_BLUE
 
 
 class TestStylesheets:
@@ -90,6 +112,35 @@ class TestStylesheets:
         assert "#f3f3f3" in LIGHT_STYLESHEET
     
     def test_stylesheets_have_status_bar_accent(self):
-        """Both stylesheets have blue status bar accent."""
+        """All stylesheets have status bar accent colors."""
         assert "#007acc" in DARK_STYLESHEET
         assert "#0078d4" in LIGHT_STYLESHEET
+        assert "#40e0d0" in AQUAMARINE_STYLESHEET
+        assert "#238636" in MIDNIGHT_BLUE_STYLESHEET
+    
+    def test_aquamarine_stylesheet_not_empty(self):
+        """Aquamarine stylesheet has content."""
+        assert len(AQUAMARINE_STYLESHEET) > 0
+    
+    def test_midnight_blue_stylesheet_not_empty(self):
+        """Midnight Blue stylesheet has content."""
+        assert len(MIDNIGHT_BLUE_STYLESHEET) > 0
+    
+    def test_aquamarine_has_turquoise_colors(self):
+        """Aquamarine stylesheet uses turquoise colors."""
+        assert "#40e0d0" in AQUAMARINE_STYLESHEET
+        assert "#1a2f2f" in AQUAMARINE_STYLESHEET
+    
+    def test_aquamarine_has_orange_accent(self):
+        """Aquamarine stylesheet uses orange accent."""
+        assert "#ff8c42" in AQUAMARINE_STYLESHEET
+    
+    def test_midnight_blue_has_dark_blue_background(self):
+        """Midnight Blue stylesheet uses dark blue background."""
+        assert "#0d1117" in MIDNIGHT_BLUE_STYLESHEET
+        assert "#161b22" in MIDNIGHT_BLUE_STYLESHEET
+    
+    def test_midnight_blue_has_bright_accents(self):
+        """Midnight Blue stylesheet has bright accent colors."""
+        assert "#58a6ff" in MIDNIGHT_BLUE_STYLESHEET
+        assert "#f85149" in MIDNIGHT_BLUE_STYLESHEET
