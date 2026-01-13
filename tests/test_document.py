@@ -60,10 +60,10 @@ class TestDocumentFileName:
         assert doc.display_name == "file.txt"
     
     def test_display_name_with_modification(self):
-        """display_name shows asterisk when modified."""
+        """display_name shows filename (modification indicator is shown via blue dot in tab bar)."""
         doc = Document(file_path="/path/file.txt")
         doc.is_modified = True
-        assert doc.display_name == "file.txt*"
+        assert doc.display_name == "file.txt"
 
 
 class TestDocumentModification:

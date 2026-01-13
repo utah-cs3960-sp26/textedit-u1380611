@@ -122,7 +122,8 @@ class TestEditorPaneState:
         
         doc.is_modified = True
         pane.update_tab_title(doc)
-        assert pane.tab_bar.tabText(0) == "file.txt*"
+        assert pane.tab_bar.tabText(0) == "file.txt"
+        assert 0 in pane.tab_bar._modified_tabs
 
 
 class TestSplitContainer:
