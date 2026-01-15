@@ -13,3 +13,5 @@ For testing I have an AMP-generated testing suite that currently includes 90 tes
 <p>
 This week I added and refined the tabs system and split view, along with adding a few themes. The tabs and split view are very smooth at this point and work very well. Dragging and rearranging tabs, along with dragging a tab to either half of the screen to create a split view is pretty seamless. Another thing I am very happy with is the resizing of the split view windows. One thing that does not work as smoothly is dragging a tab that is in split view back to the original tab bar in order to collapse back into one view. It works, but you have to go down and around the secondary tab bar rather than dragging directly horizontal. As of now, I have unit tests for every function I have added. I made a note in my AGENTS.md to always write tests for new code and run/debug them before reporting back to me and this has worked well so far. 
 </p>
+<img width="400" height="350" alt="image" src="https://github.com/user-attachments/assets/a253552e-6e1c-432f-8024-7a76fbd8ef8c" />
+
