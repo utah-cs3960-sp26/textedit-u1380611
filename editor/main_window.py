@@ -17,6 +17,7 @@ from editor.split_container import SplitContainer
 from editor.file_handler import FileHandler
 from editor.theme_manager import ThemeManager, Theme
 from editor.file_tree import FileTree, CollapsibleSidebar
+from editor.settings_dialog import SettingsDialog
 
 
 class MainWindow(QMainWindow):
@@ -30,7 +31,7 @@ class MainWindow(QMainWindow):
         self._theme_manager = ThemeManager()
         
         self._setup_ui()
-        self._theme_manager.apply_theme(Theme.MIDNIGHT_BLUE)
+        self._theme_manager.apply_theme_by_name(self._theme_manager.current_theme_name)
         self._apply_line_number_colors()
         self._setup_menus()
         self._setup_status_bar()
@@ -70,6 +71,7 @@ class MainWindow(QMainWindow):
         self._setup_file_menu(menubar)
         self._setup_edit_menu(menubar)
         self._setup_view_menu(menubar)
+        self._setup_settings_menu(menubar)
         self._setup_help_menu(menubar)
     
     def _setup_file_menu(self, menubar: QMenuBar):
@@ -180,39 +182,52 @@ class MainWindow(QMainWindow):
         
         view_menu.addSeparator()
         
-        themes_menu = view_menu.addMenu("&Themes")
-        
-        self._dark_theme_action = QAction("&Dark", self)
-        self._dark_theme_action.setCheckable(True)
-        self._dark_theme_action.setChecked(False)
-        self._dark_theme_action.triggered.connect(lambda: self._on_theme_changed(Theme.DARK))
-        themes_menu.addAction(self._dark_theme_action)
-        
-        self._light_theme_action = QAction("&Light", self)
-        self._light_theme_action.setCheckable(True)
-        self._light_theme_action.setChecked(False)
-        self._light_theme_action.triggered.connect(lambda: self._on_theme_changed(Theme.LIGHT))
-        themes_menu.addAction(self._light_theme_action)
-        
-        self._aquamarine_theme_action = QAction("&Aquamarine", self)
-        self._aquamarine_theme_action.setCheckable(True)
-        self._aquamarine_theme_action.setChecked(False)
-        self._aquamarine_theme_action.triggered.connect(lambda: self._on_theme_changed(Theme.AQUAMARINE))
-        themes_menu.addAction(self._aquamarine_theme_action)
-        
-        self._midnight_blue_theme_action = QAction("&Midnight Blue", self)
-        self._midnight_blue_theme_action.setCheckable(True)
-        self._midnight_blue_theme_action.setChecked(True)
-        self._midnight_blue_theme_action.triggered.connect(lambda: self._on_theme_changed(Theme.MIDNIGHT_BLUE))
-        themes_menu.addAction(self._midnight_blue_theme_action)
-        
-        view_menu.addSeparator()
-        
         self._swap_panes_action = QAction("Swap Split &Panes", self)
         self._swap_panes_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         self._swap_panes_action.triggered.connect(self._on_swap_panes)
         self._swap_panes_action.setEnabled(False)
         view_menu.addAction(self._swap_panes_action)
+    
+    def _setup_settings_menu(self, menubar: QMenuBar):
+        """Create the Settings menu."""
+        settings_menu = menubar.addMenu("&Settings")
+        
+        self._themes_menu = settings_menu.addMenu("&Quick Themes")
+        self._theme_actions = {}
+        self._rebuild_themes_menu()
+        
+        settings_menu.addSeparator()
+        
+        theme_manager_action = QAction("&Theme Manager...", self)
+        theme_manager_action.setShortcut(QKeySequence("Ctrl+,"))
+        theme_manager_action.triggered.connect(self._on_open_settings)
+        settings_menu.addAction(theme_manager_action)
+    
+    def _rebuild_themes_menu(self):
+        """Rebuild the Quick Themes menu with all available themes."""
+        self._themes_menu.clear()
+        self._theme_actions.clear()
+        
+        current_theme = self._theme_manager.current_theme_name
+        
+        for name in self._theme_manager.get_builtin_theme_names():
+            action = QAction(f"📦 {name}", self)
+            action.setCheckable(True)
+            action.setChecked(name == current_theme)
+            action.triggered.connect(lambda checked, n=name: self._on_theme_changed(n))
+            self._themes_menu.addAction(action)
+            self._theme_actions[name] = action
+        
+        custom_themes = self._theme_manager.get_custom_theme_names()
+        if custom_themes:
+            self._themes_menu.addSeparator()
+            for name in custom_themes:
+                action = QAction(f"✏️ {name}", self)
+                action.setCheckable(True)
+                action.setChecked(name == current_theme)
+                action.triggered.connect(lambda checked, n=name: self._on_theme_changed(n))
+                self._themes_menu.addAction(action)
+                self._theme_actions[name] = action
     
     def _setup_help_menu(self, menubar: QMenuBar):
         """Create the Help menu."""
@@ -602,14 +617,29 @@ class MainWindow(QMainWindow):
         else:
             self._show_error("Open Error", result.error_message)
     
-    def _on_theme_changed(self, theme: Theme):
+    def _on_theme_changed(self, theme_name: str):
         """Handle theme selection."""
-        self._theme_manager.apply_theme(theme)
+        self._theme_manager.apply_theme_by_name(theme_name)
         self._apply_line_number_colors()
-        self._dark_theme_action.setChecked(theme == Theme.DARK)
-        self._light_theme_action.setChecked(theme == Theme.LIGHT)
-        self._aquamarine_theme_action.setChecked(theme == Theme.AQUAMARINE)
-        self._midnight_blue_theme_action.setChecked(theme == Theme.MIDNIGHT_BLUE)
+        self._update_theme_checkmarks(theme_name)
+    
+    def _update_theme_checkmarks(self, theme_name: str):
+        """Update theme menu checkmarks."""
+        for name, action in self._theme_actions.items():
+            action.setChecked(name == theme_name)
+    
+    def _on_open_settings(self):
+        """Open the settings dialog."""
+        dialog = SettingsDialog(self._theme_manager, self)
+        dialog.theme_changed.connect(self._on_settings_theme_changed)
+        dialog.exec()
+        self._rebuild_themes_menu()
+    
+    def _on_settings_theme_changed(self, theme_name: str):
+        """Handle theme change from settings dialog."""
+        self._theme_manager.apply_theme_by_name(theme_name)
+        self._apply_line_number_colors()
+        self._rebuild_themes_menu()
     
     def _apply_line_number_colors(self):
         """Apply line number colors based on current theme."""
