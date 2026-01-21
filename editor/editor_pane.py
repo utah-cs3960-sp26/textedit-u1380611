@@ -208,6 +208,7 @@ class EditorPane(QWidget):
         
         doc = self._documents[self._current_index]
         doc.content = self._editor.toPlainText()
+        doc.html_content = self._editor.document().toHtml()
         
         cursor = self._editor.textCursor()
         doc.cursor_position = CursorPosition(
@@ -226,7 +227,10 @@ class EditorPane(QWidget):
         """Restore editor state from a document."""
         self._editor.blockSignals(True)
         
-        self._editor.setPlainText(document.content)
+        if document.html_content:
+            self._editor.document().setHtml(document.html_content)
+        else:
+            self._editor.setPlainText(document.content)
         
         cursor = self._editor.textCursor()
         block = self._editor.document().findBlockByLineNumber(

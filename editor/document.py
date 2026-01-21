@@ -41,6 +41,7 @@ class Document:
     def __init__(self, content: str = "", file_path: Optional[str] = None):
         self._id: str = str(uuid4())
         self._content: str = content
+        self._html_content: Optional[str] = None
         self._file_path: Optional[str] = file_path
         self._is_modified: bool = False
         self._cursor_position: CursorPosition = CursorPosition()
@@ -62,6 +63,16 @@ class Document:
     def content(self, value: str):
         """Set the document content."""
         self._content = value
+    
+    @property
+    def html_content(self) -> Optional[str]:
+        """Get the HTML content for rich text formatting."""
+        return self._html_content
+    
+    @html_content.setter
+    def html_content(self, value: Optional[str]):
+        """Set the HTML content for rich text formatting."""
+        self._html_content = value
     
     @property
     def file_path(self) -> Optional[str]:

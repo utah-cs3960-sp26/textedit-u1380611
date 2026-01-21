@@ -11,9 +11,10 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QListWidget, QListWidgetItem, QPushButton, QLabel, QLineEdit,
     QGroupBox, QFormLayout, QColorDialog, QMessageBox, QScrollArea,
-    QFrame, QSplitter, QSizePolicy
+    QFrame, QSplitter, QSizePolicy, QFontComboBox, QSpinBox,
+    QRadioButton, QButtonGroup, QTextEdit
 )
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QPalette, QFont, QFontDatabase
 from PySide6.QtCore import Qt, Signal
 
 
@@ -436,6 +437,139 @@ class ThemeManagerWidget(QWidget):
         self.theme_applied.emit(name)
 
 
+class FontManagerWidget(QWidget):
+    """Widget for managing fonts in settings."""
+    
+    font_apply_requested = Signal(QFont, bool)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._editor_bg = "#1e1e1e"
+        self._editor_text = "#d4d4d4"
+        self._setup_ui()
+    
+    def set_theme_colors(self, editor_bg: str, editor_text: str):
+        """Set the theme colors for the preview."""
+        self._editor_bg = editor_bg
+        self._editor_text = editor_text
+        self._apply_theme_style()
+    
+    def _apply_theme_style(self):
+        """Apply theme colors to widgets."""
+        self._preview_text.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {self._editor_bg};
+                color: {self._editor_text};
+                border: 1px solid {self._editor_text}40;
+                border-radius: 4px;
+            }}
+        """)
+        
+        self.setStyleSheet(f"""
+            QGroupBox {{
+                color: {self._editor_text};
+            }}
+            QGroupBox::title {{
+                color: {self._editor_text};
+            }}
+            QRadioButton {{
+                color: {self._editor_text};
+            }}
+            QLabel {{
+                color: {self._editor_text};
+            }}
+        """)
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        font_group = QGroupBox("Font Selection")
+        font_layout = QFormLayout(font_group)
+        
+        self._font_combo = QFontComboBox()
+        self._font_combo.setCurrentFont(QFont("Monospace"))
+        self._font_combo.currentFontChanged.connect(self._update_preview)
+        font_layout.addRow("Font Family:", self._font_combo)
+        
+        self._size_spin = QSpinBox()
+        self._size_spin.setRange(6, 72)
+        self._size_spin.setValue(12)
+        self._size_spin.valueChanged.connect(self._update_preview)
+        font_layout.addRow("Font Size:", self._size_spin)
+        
+        layout.addWidget(font_group)
+        
+        preview_group = QGroupBox("Preview")
+        preview_layout = QVBoxLayout(preview_group)
+        
+        self._preview_text = QTextEdit()
+        self._preview_text.setPlainText(
+            "The quick brown fox jumps over the lazy dog.\n"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ\n"
+            "abcdefghijklmnopqrstuvwxyz\n"
+            "0123456789 !@#$%^&*()_+-=[]{}|;':\",./<>?"
+        )
+        self._preview_text.setMinimumHeight(100)
+        self._preview_text.setMaximumHeight(150)
+        self._preview_text.setReadOnly(True)
+        self._apply_theme_style()
+        preview_layout.addWidget(self._preview_text)
+        
+        layout.addWidget(preview_group)
+        
+        apply_group = QGroupBox("Apply To")
+        apply_layout = QVBoxLayout(apply_group)
+        
+        self._apply_group = QButtonGroup(self)
+        
+        self._apply_all_radio = QRadioButton("Apply to all text in document")
+        self._apply_all_radio.setChecked(True)
+        self._apply_group.addButton(self._apply_all_radio)
+        apply_layout.addWidget(self._apply_all_radio)
+        
+        self._apply_selection_radio = QRadioButton("Apply to selected text only")
+        self._apply_group.addButton(self._apply_selection_radio)
+        apply_layout.addWidget(self._apply_selection_radio)
+        
+        layout.addWidget(apply_group)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        self._apply_btn = QPushButton("Apply Font")
+        self._apply_btn.clicked.connect(self._on_apply_font)
+        btn_layout.addWidget(self._apply_btn)
+        
+        layout.addLayout(btn_layout)
+        layout.addStretch()
+        
+        self._update_preview()
+    
+    def _update_preview(self):
+        """Update the preview text with the selected font."""
+        font = self._font_combo.currentFont()
+        font.setPointSize(self._size_spin.value())
+        self._preview_text.setFont(font)
+    
+    def _on_apply_font(self):
+        """Emit signal to apply font."""
+        font = self._font_combo.currentFont()
+        font.setPointSize(self._size_spin.value())
+        apply_to_selection = self._apply_selection_radio.isChecked()
+        self.font_apply_requested.emit(font, apply_to_selection)
+    
+    def get_current_font(self) -> QFont:
+        """Get the currently selected font."""
+        font = self._font_combo.currentFont()
+        font.setPointSize(self._size_spin.value())
+        return font
+    
+    def is_selection_mode(self) -> bool:
+        """Check if applying to selection only."""
+        return self._apply_selection_radio.isChecked()
+
+
 class SettingsDialog(QDialog):
     """Settings dialog with theme management."""
     
@@ -447,19 +581,15 @@ class SettingsDialog(QDialog):
         self._setup_ui()
     
     def _setup_ui(self):
-        self.setWindowTitle("Settings")
+        self.setWindowTitle("Theme Manager")
         self.setMinimumSize(700, 500)
         self.resize(800, 600)
         
         layout = QVBoxLayout(self)
         
-        tabs = QTabWidget()
-        
         theme_widget = ThemeManagerWidget(self._theme_manager)
         theme_widget.theme_applied.connect(self._on_theme_applied)
-        tabs.addTab(theme_widget, "Themes")
-        
-        layout.addWidget(tabs)
+        layout.addWidget(theme_widget)
         
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
@@ -473,3 +603,49 @@ class SettingsDialog(QDialog):
     def _on_theme_applied(self, theme_name: str):
         """Handle theme application."""
         self.theme_changed.emit(theme_name)
+
+
+class FontManagerDialog(QDialog):
+    """Dialog for font management."""
+    
+    font_apply_requested = Signal(QFont, bool)
+    
+    def __init__(self, theme_manager, parent=None):
+        super().__init__(parent)
+        self._theme_manager = theme_manager
+        self._setup_ui()
+        self._apply_theme_colors()
+    
+    def _setup_ui(self):
+        self.setWindowTitle("Font Manager")
+        self.setMinimumSize(400, 450)
+        self.resize(450, 500)
+        
+        layout = QVBoxLayout(self)
+        
+        self._font_widget = FontManagerWidget()
+        self._font_widget.font_apply_requested.connect(self._on_font_apply)
+        layout.addWidget(self._font_widget)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+        
+        layout.addLayout(btn_layout)
+    
+    def _apply_theme_colors(self):
+        """Apply theme colors to the font widget."""
+        colors = self._theme_manager.get_theme_colors(
+            self._theme_manager.current_theme_name
+        )
+        self._font_widget.set_theme_colors(
+            colors.get("editor_background", "#1e1e1e"),
+            colors.get("editor_text", "#d4d4d4")
+        )
+    
+    def _on_font_apply(self, font: QFont, selection_only: bool):
+        """Handle font application request."""
+        self.font_apply_requested.emit(font, selection_only)

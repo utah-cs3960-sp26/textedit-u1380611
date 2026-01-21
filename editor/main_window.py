@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QMenuBar, QStatusBar, QMessageBox,
     QFileDialog, QLabel, QSplitter
 )
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QKeySequence, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtCore import Qt
 
 from editor.document import Document
@@ -17,7 +17,8 @@ from editor.split_container import SplitContainer
 from editor.file_handler import FileHandler
 from editor.theme_manager import ThemeManager, Theme
 from editor.file_tree import FileTree, CollapsibleSidebar
-from editor.settings_dialog import SettingsDialog
+from editor.settings_dialog import SettingsDialog, FontManagerDialog
+from editor.font_toolbar import FontMiniToolbar
 
 
 class MainWindow(QMainWindow):
@@ -31,8 +32,10 @@ class MainWindow(QMainWindow):
         self._theme_manager = ThemeManager()
         
         self._setup_ui()
+        self._setup_font_toolbar()
         self._theme_manager.apply_theme_by_name(self._theme_manager.current_theme_name)
         self._apply_line_number_colors()
+        self._apply_font_toolbar_theme()
         self._setup_menus()
         self._setup_status_bar()
         self._connect_signals()
@@ -202,6 +205,11 @@ class MainWindow(QMainWindow):
         theme_manager_action.setShortcut(QKeySequence("Ctrl+,"))
         theme_manager_action.triggered.connect(self._on_open_settings)
         settings_menu.addAction(theme_manager_action)
+        
+        font_manager_action = QAction("&Font Manager...", self)
+        font_manager_action.setShortcut(QKeySequence("Ctrl+Shift+F"))
+        font_manager_action.triggered.connect(self._on_open_font_manager)
+        settings_menu.addAction(font_manager_action)
     
     def _rebuild_themes_menu(self):
         """Rebuild the Quick Themes menu with all available themes."""
@@ -252,6 +260,37 @@ class MainWindow(QMainWindow):
         self._status_bar.addPermanentWidget(self._modified_label)
         self._status_bar.addPermanentWidget(self._position_label)
     
+    def _setup_font_toolbar(self):
+        """Initialize the floating font toolbar."""
+        self._font_toolbars = {}
+        self._create_font_toolbars_for_panes()
+    
+    def _create_font_toolbars_for_panes(self):
+        """Create font toolbars for all editor panes."""
+        for pane in self._split_container._panes:
+            if pane not in self._font_toolbars:
+                toolbar = FontMiniToolbar()
+                toolbar.set_main_window(self)
+                toolbar.attach_to_editor(pane.editor)
+                self._font_toolbars[pane] = toolbar
+                self._apply_font_toolbar_theme_to(toolbar)
+    
+    def _apply_font_toolbar_theme_to(self, toolbar):
+        """Apply theme colors to a font toolbar."""
+        colors = self._theme_manager.get_theme_colors(
+            self._theme_manager.current_theme_name
+        )
+        toolbar.set_theme_colors(
+            colors.get("editor_background", "#1e1e1e"),
+            colors.get("editor_text", "#d4d4d4"),
+            colors.get("border_color", "#444444")
+        )
+    
+    def _apply_font_toolbar_theme(self):
+        """Apply theme colors to all font toolbars."""
+        for toolbar in self._font_toolbars.values():
+            self._apply_font_toolbar_theme_to(toolbar)
+    
     def _connect_signals(self):
         """Connect container signals."""
         self._split_container.active_document_changed.connect(self._on_document_changed)
@@ -259,6 +298,7 @@ class MainWindow(QMainWindow):
         self._split_container.layout_changed.connect(self._on_layout_changed)
         self._split_container.close_app_requested.connect(self.close)
         self._split_container.save_document_requested.connect(self._on_save_and_close_tab)
+        self._split_container.layout_changed.connect(self._create_font_toolbars_for_panes)
     
     def _get_active_editor(self):
         """Get the currently active editor widget."""
@@ -621,6 +661,7 @@ class MainWindow(QMainWindow):
         """Handle theme selection."""
         self._theme_manager.apply_theme_by_name(theme_name)
         self._apply_line_number_colors()
+        self._apply_font_toolbar_theme()
         self._update_theme_checkmarks(theme_name)
     
     def _update_theme_checkmarks(self, theme_name: str):
@@ -635,11 +676,49 @@ class MainWindow(QMainWindow):
         dialog.exec()
         self._rebuild_themes_menu()
     
+    def _on_open_font_manager(self):
+        """Open the font manager dialog."""
+        dialog = FontManagerDialog(self._theme_manager, self)
+        dialog.font_apply_requested.connect(self._on_font_apply)
+        dialog.exec()
+    
     def _on_settings_theme_changed(self, theme_name: str):
         """Handle theme change from settings dialog."""
         self._theme_manager.apply_theme_by_name(theme_name)
         self._apply_line_number_colors()
+        self._apply_font_toolbar_theme()
         self._rebuild_themes_menu()
+    
+    def _on_font_apply(self, font: QFont, selection_only: bool):
+        """Handle font application from settings dialog."""
+        if selection_only:
+            self._apply_font_to_selections(font)
+        else:
+            self._apply_font_to_active_document(font)
+    
+    def _apply_font_to_active_document(self, font: QFont):
+        """Apply font to all text in the most recently active document."""
+        editor = self._get_active_editor()
+        if editor:
+            editor.setFont(font)
+            
+            cursor = editor.textCursor()
+            cursor.select(QTextCursor.SelectionType.Document)
+            fmt = QTextCharFormat()
+            fmt.setFont(font)
+            cursor.mergeCharFormat(fmt)
+    
+    def _apply_font_to_selections(self, font: QFont):
+        """Apply font to selected text in all panes that have selections."""
+        fmt = QTextCharFormat()
+        fmt.setFont(font)
+        
+        for pane in self._split_container._panes:
+            editor = pane.editor
+            cursor = editor.textCursor()
+            if cursor.hasSelection():
+                cursor.mergeCharFormat(fmt)
+                editor.setTextCursor(cursor)
     
     def _apply_line_number_colors(self):
         """Apply line number colors based on current theme."""

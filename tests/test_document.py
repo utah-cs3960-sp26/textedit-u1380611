@@ -171,3 +171,25 @@ class TestDocumentUndoHistory:
         doc.clear_undo_history()
         assert len(doc._undo_stack) == 0
         assert len(doc._redo_stack) == 0
+
+
+class TestDocumentHtmlContent:
+    """Tests for HTML content property."""
+    
+    def test_html_content_initially_none(self):
+        """HTML content is None by default."""
+        doc = Document()
+        assert doc.html_content is None
+    
+    def test_set_html_content(self):
+        """Can set HTML content."""
+        doc = Document()
+        doc.html_content = "<html><body>Test</body></html>"
+        assert doc.html_content == "<html><body>Test</body></html>"
+    
+    def test_html_content_independent_of_plain_content(self):
+        """HTML content is stored separately from plain content."""
+        doc = Document(content="Plain text")
+        doc.html_content = "<b>Bold</b>"
+        assert doc.content == "Plain text"
+        assert doc.html_content == "<b>Bold</b>"
