@@ -19,6 +19,7 @@ from editor.theme_manager import ThemeManager, Theme
 from editor.file_tree import FileTree, CollapsibleSidebar
 from editor.settings_dialog import SettingsDialog, FontManagerDialog
 from editor.font_toolbar import FontMiniToolbar
+from editor.find_replace import FindReplaceDialog, MultiFileFindDialog
 
 
 class MainWindow(QMainWindow):
@@ -30,6 +31,9 @@ class MainWindow(QMainWindow):
         self._file_handler = FileHandler()
         self._word_wrap_enabled = True
         self._theme_manager = ThemeManager()
+        
+        self._find_replace_dialog = None
+        self._multi_file_find_dialog = None
         
         self._setup_ui()
         self._setup_font_toolbar()
@@ -159,6 +163,30 @@ class MainWindow(QMainWindow):
         select_all_action.setShortcut(QKeySequence.StandardKey.SelectAll)
         select_all_action.triggered.connect(self._on_select_all)
         edit_menu.addAction(select_all_action)
+        
+        edit_menu.addSeparator()
+        
+        find_action = QAction("&Find...", self)
+        find_action.setShortcut(QKeySequence("Ctrl+F"))
+        find_action.triggered.connect(self._on_find)
+        edit_menu.addAction(find_action)
+        
+        replace_action = QAction("&Replace...", self)
+        replace_action.setShortcut(QKeySequence("Ctrl+H"))
+        replace_action.triggered.connect(self._on_replace)
+        edit_menu.addAction(replace_action)
+        
+        edit_menu.addSeparator()
+        
+        find_in_files_action = QAction("Find in &Open Files...", self)
+        find_in_files_action.setShortcut(QKeySequence("Ctrl+Shift+G"))
+        find_in_files_action.triggered.connect(self._on_find_in_files)
+        edit_menu.addAction(find_in_files_action)
+        
+        replace_in_files_action = QAction("Replace in Open Fi&les...", self)
+        replace_in_files_action.setShortcut(QKeySequence("Ctrl+Shift+H"))
+        replace_in_files_action.triggered.connect(self._on_replace_in_files)
+        edit_menu.addAction(replace_in_files_action)
     
     def _setup_view_menu(self, menubar: QMenuBar):
         """Create the View menu."""
@@ -604,6 +632,84 @@ class MainWindow(QMainWindow):
         editor = self._get_active_editor()
         if editor:
             editor.selectAll()
+    
+    def _on_find(self):
+        """Handle Edit > Find."""
+        editor = self._get_active_editor()
+        if not editor:
+            return
+        
+        if self._find_replace_dialog is None:
+            self._find_replace_dialog = FindReplaceDialog(editor, self)
+        else:
+            self._find_replace_dialog._editor = editor
+        
+        self._find_replace_dialog.show_find()
+    
+    def _on_replace(self):
+        """Handle Edit > Replace."""
+        editor = self._get_active_editor()
+        if not editor:
+            return
+        
+        if self._find_replace_dialog is None:
+            self._find_replace_dialog = FindReplaceDialog(editor, self)
+        else:
+            self._find_replace_dialog._editor = editor
+        
+        self._find_replace_dialog.show_replace()
+    
+    def _on_find_in_files(self):
+        """Handle Edit > Find in Open Files."""
+        if self._multi_file_find_dialog is None:
+            self._multi_file_find_dialog = MultiFileFindDialog(
+                self._get_all_documents,
+                self._get_pane_for_document,
+                self
+            )
+            self._multi_file_find_dialog.goto_match_requested.connect(
+                self._on_goto_match
+            )
+        
+        self._multi_file_find_dialog.show_find()
+    
+    def _on_replace_in_files(self):
+        """Handle Edit > Replace in Open Files."""
+        if self._multi_file_find_dialog is None:
+            self._multi_file_find_dialog = MultiFileFindDialog(
+                self._get_all_documents,
+                self._get_pane_for_document,
+                self
+            )
+            self._multi_file_find_dialog.goto_match_requested.connect(
+                self._on_goto_match
+            )
+        
+        self._multi_file_find_dialog.show_replace()
+    
+    def _get_all_documents(self):
+        """Get all open documents from all panes."""
+        return self._split_container.all_documents
+    
+    def _get_pane_for_document(self, document):
+        """Get the pane containing a document."""
+        return self._split_container.get_pane_for_document(document)
+    
+    def _on_goto_match(self, document, position: int):
+        """Handle navigation to a search match."""
+        pane = self._split_container.get_pane_for_document(document)
+        if pane is None:
+            return
+        
+        pane.set_current_document(document)
+        self._split_container._active_pane = pane
+        
+        editor = pane.editor
+        cursor = editor.textCursor()
+        cursor.setPosition(position)
+        editor.setTextCursor(cursor)
+        editor.centerCursor()
+        editor.setFocus()
     
     def _on_toggle_word_wrap(self, checked: bool):
         """Handle View > Word Wrap toggle."""
