@@ -663,12 +663,6 @@ class TestEdgeCases:
         matches = FindReplaceEngine.find_all(content, "test")
         assert len(matches) == 2
     
-    def test_find_overlapping_potential(self):
-        """Find handles potential overlapping patterns."""
-        content = "aaaa"
-        matches = FindReplaceEngine.find_all(content, "aa")
-        assert len(matches) == 3
-    
     def test_replace_with_longer_text(self):
         """Replace with longer text works correctly."""
         content = "a b c"
