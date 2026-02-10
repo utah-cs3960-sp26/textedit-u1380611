@@ -3,7 +3,7 @@ Tests for Find and Replace functionality.
 """
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox, QTreeWidgetItem
 from PySide6.QtGui import QTextCursor
 
 from editor.document import Document
@@ -689,3 +689,504 @@ class TestEdgeCases:
         content = "test " * 1000
         matches = FindReplaceEngine.find_all(content, "test")
         assert len(matches) == 1000
+
+
+class TestFindReplaceDialogShowMethods:
+    """Tests for show_find and show_replace methods."""
+    
+    def test_show_find_with_selection(self, pane):
+        """show_find populates field with selected text."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test content here")
+        
+        cursor = pane._editor.textCursor()
+        cursor.setPosition(0)
+        cursor.setPosition(4, QTextCursor.MoveMode.KeepAnchor)
+        pane._editor.setTextCursor(cursor)
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog.show_find()
+        
+        assert dialog._find_edit.text() == "test"
+        
+        dialog.deleteLater()
+    
+    def test_show_find_without_selection(self, pane):
+        """show_find works without selection."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test content")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog.show_find()
+        
+        assert dialog.isVisible()
+        
+        dialog.deleteLater()
+    
+    def test_show_replace_with_selection(self, pane):
+        """show_replace populates field with selected text."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test content here")
+        
+        cursor = pane._editor.textCursor()
+        cursor.setPosition(0)
+        cursor.setPosition(4, QTextCursor.MoveMode.KeepAnchor)
+        pane._editor.setTextCursor(cursor)
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog.show_replace()
+        
+        assert dialog._find_edit.text() == "test"
+        
+        dialog.deleteLater()
+    
+    def test_dialog_case_sensitive_property(self, pane):
+        """Case sensitive property reflects checkbox state."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        assert dialog.case_sensitive == False
+        
+        dialog._case_checkbox.setChecked(True)
+        assert dialog.case_sensitive == True
+        
+        dialog.deleteLater()
+
+
+class TestFindReplaceDialogAdvanced:
+    """Tests for advanced dialog functionality."""
+    
+    def test_goto_current_match_with_matches(self, pane):
+        """goto_current_match positions cursor at match."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test one test two")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("test")
+        dialog._on_query_changed()
+        
+        dialog._current_match_index = 1
+        dialog._goto_current_match()
+        
+        cursor = pane._editor.textCursor()
+        assert cursor.selectedText() == "test"
+        assert cursor.selectionStart() == 9
+        
+        dialog.deleteLater()
+    
+    def test_replace_current_when_selected(self, pane):
+        """Replace current works when match is already selected."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("cat cat cat")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("cat")
+        dialog._replace_edit.setText("dog")
+        dialog._on_query_changed()
+        
+        dialog._goto_current_match()
+        dialog._replace_current()
+        
+        content = pane._editor.toPlainText()
+        assert content == "dog cat cat"
+        
+        dialog.deleteLater()
+    
+    def test_replace_current_wraps_around(self, pane):
+        """Replace current on last match wraps to first."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("cat cat")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("cat")
+        dialog._replace_edit.setText("dog")
+        dialog._on_query_changed()
+        
+        dialog._current_match_index = 1
+        dialog._goto_current_match()
+        dialog._replace_current()
+        
+        content = pane._editor.toPlainText()
+        assert "dog" in content
+        
+        dialog.deleteLater()
+    
+    def test_find_prev_navigates_backwards(self, pane):
+        """Find previous navigates to previous match."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test one test two test three")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("test")
+        dialog._on_query_changed()
+        
+        dialog._current_match_index = 1
+        dialog._find_prev()
+        assert dialog._current_match_index == 0
+        
+        dialog.deleteLater()
+    
+    def test_find_prev_wraps_around(self, pane):
+        """Find previous at first match wraps to last."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test test test")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("test")
+        dialog._on_query_changed()
+        
+        dialog._current_match_index = 0
+        dialog._find_prev()
+        assert dialog._current_match_index == 2
+        
+        dialog.deleteLater()
+    
+    def test_goto_current_match_with_invalid_index(self, pane):
+        """goto_current_match handles invalid indices gracefully."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("test")
+        dialog._on_query_changed()
+        
+        dialog._current_match_index = 999
+        dialog._goto_current_match()
+        
+        dialog.deleteLater()
+    
+    def test_close_event_clears_highlights(self, pane):
+        """closeEvent clears highlights."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test test")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("test")
+        dialog._on_query_changed()
+        
+        assert len(dialog._extra_selections) > 0
+        
+        dialog.close()
+        
+        assert len(pane._editor.extraSelections()) == 0
+    
+    def test_clear_highlights_removes_selections(self, pane):
+        """_clear_highlights removes all selections."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test test")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("test")
+        dialog._on_query_changed()
+        
+        assert len(dialog._extra_selections) > 0
+        
+        dialog._clear_highlights()
+        
+        assert len(dialog._extra_selections) == 0
+
+
+class TestMultiFileFindAdvanced:
+    """Tests for advanced multi-file find functionality."""
+    
+    def test_query_property(self, container):
+        """Query property returns search text."""
+        doc = container.active_document
+        doc.content = "test"
+        
+        def get_docs():
+            return container.all_documents
+        
+        def get_pane(doc):
+            return container.get_pane_for_document(doc)
+        
+        dialog = MultiFileFindDialog(get_docs, get_pane)
+        dialog._find_edit.setText("search")
+        assert dialog.query == "search"
+        
+        dialog.deleteLater()
+    
+    def test_replacement_property(self, container):
+        """Replacement property returns replacement text."""
+        doc = container.active_document
+        
+        def get_docs():
+            return container.all_documents
+        
+        def get_pane(doc):
+            return container.get_pane_for_document(doc)
+        
+        dialog = MultiFileFindDialog(get_docs, get_pane)
+        dialog._replace_edit.setText("replacement")
+        assert dialog.replacement == "replacement"
+        
+        dialog.deleteLater()
+    
+    def test_case_sensitive_property(self, container):
+        """Case sensitive property reflects checkbox."""
+        doc = container.active_document
+        
+        def get_docs():
+            return container.all_documents
+        
+        def get_pane(doc):
+            return container.get_pane_for_document(doc)
+        
+        dialog = MultiFileFindDialog(get_docs, get_pane)
+        assert dialog.case_sensitive == False
+        
+        dialog._case_checkbox.setChecked(True)
+        assert dialog.case_sensitive == True
+        
+        dialog.deleteLater()
+    
+    def test_search_empty_query_no_search(self, container):
+        """Empty query does not perform search."""
+        doc = container.active_document
+        doc.content = "test content"
+        
+        def get_docs():
+            return container.all_documents
+        
+        def get_pane(doc):
+            return container.get_pane_for_document(doc)
+        
+        dialog = MultiFileFindDialog(get_docs, get_pane)
+        dialog._do_search()
+        
+        assert len(dialog._results) == 0
+        assert "Enter search text" in dialog._status_label.text()
+        
+        dialog.deleteLater()
+    
+    def test_item_double_click_with_none_data(self, container):
+        """Double-click with none data does nothing."""
+        doc = container.active_document
+        doc.content = "test"
+        container.active_pane._editor.setPlainText(doc.content)
+        
+        def get_docs():
+            container.active_pane.sync_from_editor()
+            return container.all_documents
+        
+        def get_pane(doc):
+            return container.get_pane_for_document(doc)
+        
+        dialog = MultiFileFindDialog(get_docs, get_pane)
+        dialog._find_edit.setText("test")
+        dialog._do_search()
+        
+        item = QTreeWidgetItem(["Test"])
+        dialog._on_item_double_clicked(item, 0)
+        
+        dialog.deleteLater()
+    
+    def test_replace_all_with_no_results(self, container):
+        """Replace all with no results does nothing."""
+        doc = container.active_document
+        doc.content = "test"
+        
+        def get_docs():
+            return container.all_documents
+        
+        def get_pane(doc):
+            return container.get_pane_for_document(doc)
+        
+        dialog = MultiFileFindDialog(get_docs, get_pane)
+        dialog._do_replace_all()
+        
+        dialog.deleteLater()
+    
+    def test_replace_all_confirm_no(self, container):
+        """Declining replace all confirmation cancels operation."""
+        doc = container.active_document
+        doc.content = "cat"
+        container.active_pane._editor.setPlainText(doc.content)
+        
+        def get_docs():
+            container.active_pane.sync_from_editor()
+            return container.all_documents
+        
+        def get_pane(doc):
+            return container.get_pane_for_document(doc)
+        
+        dialog = MultiFileFindDialog(get_docs, get_pane)
+        dialog._find_edit.setText("cat")
+        dialog._replace_edit.setText("dog")
+        dialog._do_search()
+        
+        original_content = doc.content
+        
+        # Mock the message box to return No
+        from unittest.mock import patch
+        with patch('editor.find_replace.QMessageBox.question') as mock_question:
+            mock_question.return_value = QMessageBox.StandardButton.No
+            dialog._do_replace_all()
+        
+        assert doc.content == original_content
+        
+        dialog.deleteLater()
+    
+    def test_replace_in_inactive_pane_document(self, container):
+        """Replace updates document not in active pane."""
+        doc1 = container.active_document
+        doc1.content = "cat in first"
+        container.active_pane._editor.setPlainText(doc1.content)
+        
+        doc2 = Document(content="cat in second")
+        container.add_document(doc2)
+        
+        def get_docs():
+            for pane in container._panes:
+                pane.sync_from_editor()
+            return container.all_documents
+        
+        def get_pane(doc):
+            return container.get_pane_for_document(doc)
+        
+        dialog = MultiFileFindDialog(get_docs, get_pane)
+        dialog._find_edit.setText("cat")
+        dialog._replace_edit.setText("dog")
+        dialog._do_search()
+        
+        from unittest.mock import patch
+        with patch('editor.find_replace.QMessageBox.question') as mock_question:
+            mock_question.return_value = QMessageBox.StandardButton.Yes
+            dialog._do_replace_all()
+        
+        dialog.deleteLater()
+    
+    def test_item_double_click_with_match_data(self, container):
+        """Double-click on match item emits signal."""
+        doc = container.active_document
+        doc.content = "test content"
+        container.active_pane._editor.setPlainText(doc.content)
+        
+        def get_docs():
+            container.active_pane.sync_from_editor()
+            return container.all_documents
+        
+        def get_pane(doc):
+            return container.get_pane_for_document(doc)
+        
+        dialog = MultiFileFindDialog(get_docs, get_pane)
+        dialog._find_edit.setText("test")
+        dialog._do_search()
+        
+        signal_emitted = []
+        dialog.goto_match_requested.connect(lambda d, p: signal_emitted.append((d, p)))
+        
+        doc_item = dialog._result_tree.topLevelItem(0)
+        match_item = doc_item.child(0)
+        
+        dialog._on_item_double_clicked(match_item, 0)
+        
+        assert len(signal_emitted) == 1
+        
+        dialog.deleteLater()
+    
+    def test_long_preview_text_truncated(self, container):
+        """Long preview text gets truncated with ellipsis."""
+        doc = container.active_document
+        long_line = "x" * 100 + " test " + "y" * 100
+        doc.content = long_line
+        container.active_pane._editor.setPlainText(doc.content)
+        
+        def get_docs():
+            container.active_pane.sync_from_editor()
+            return container.all_documents
+        
+        def get_pane(doc):
+            return container.get_pane_for_document(doc)
+        
+        dialog = MultiFileFindDialog(get_docs, get_pane)
+        dialog._find_edit.setText("test")
+        dialog._do_search()
+        
+        doc_item = dialog._result_tree.topLevelItem(0)
+        match_item = doc_item.child(0)
+        preview = match_item.text(2)
+        
+        assert preview.endswith("...")
+        assert len(preview) <= 80
+        
+        dialog.deleteLater()
+    
+    def test_update_status_with_no_query(self, pane):
+        """_update_status shows correct message when no query."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test content")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("")
+        dialog._on_query_changed()
+        
+        assert "Enter search text" in dialog._status_label.text()
+        
+        dialog.deleteLater()
+    
+    def test_replace_current_without_selection_goto_match(self, pane):
+        """Replace current without selection moves to match."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("cat cat cat")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("cat")
+        dialog._replace_edit.setText("dog")
+        dialog._on_query_changed()
+        
+        cursor = pane._editor.textCursor()
+        cursor.setPosition(0)
+        pane._editor.setTextCursor(cursor)
+        
+        dialog._replace_current()
+        
+        cursor = pane._editor.textCursor()
+        assert cursor.selectedText() == "cat"
+        
+        dialog.deleteLater()
+
+
+class TestMultiFileFindShowMethods:
+    """Tests for MultiFileFindDialog show methods."""
+    
+    def test_show_find(self, container):
+        """show_find displays dialog and prepares find field."""
+        doc = container.active_document
+        doc.content = "test"
+        
+        def get_docs():
+            return container.all_documents
+        
+        def get_pane(doc):
+            return container.get_pane_for_document(doc)
+        
+        dialog = MultiFileFindDialog(get_docs, get_pane)
+        dialog.show_find()
+        
+        assert dialog.isVisible()
+        # Find field should be selected
+        assert dialog._find_edit.selectedText() == "" or dialog._find_edit.text() == ""
+        
+        dialog.deleteLater()
+    
+    def test_show_replace(self, container):
+        """show_replace displays dialog and prepares find field."""
+        doc = container.active_document
+        doc.content = "test"
+        
+        def get_docs():
+            return container.all_documents
+        
+        def get_pane(doc):
+            return container.get_pane_for_document(doc)
+        
+        dialog = MultiFileFindDialog(get_docs, get_pane)
+        dialog.show_replace()
+        
+        assert dialog.isVisible()
+        # Find field should be selected
+        assert dialog._find_edit.selectedText() == "" or dialog._find_edit.text() == ""
+        
+        dialog.deleteLater()
