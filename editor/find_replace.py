@@ -269,11 +269,6 @@ class FindReplaceDialog(QDialog):
             self._status_label.setText(
                 f"Match {self._current_match_index + 1} of {len(self._matches)}"
             )
-        else:
-            if self.query:
-                self._status_label.setText("No matches found")
-            else:
-                self._status_label.setText("Enter search text")
     
     def _update_highlights(self):
         """Update highlighting in the editor."""

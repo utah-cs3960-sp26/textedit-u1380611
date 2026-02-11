@@ -1190,3 +1190,120 @@ class TestMultiFileFindShowMethods:
         assert dialog._find_edit.selectedText() == "" or dialog._find_edit.text() == ""
         
         dialog.deleteLater()
+
+
+class TestUncoveredEdgeCases:
+    """Tests for the remaining edge case code paths."""
+    
+    def test_replace_current_with_no_matches(self, pane):
+        """_replace_current returns early when no matches."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test content")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("xyz")
+        dialog._replace_edit.setText("abc")
+        dialog._on_query_changed()
+        
+        assert len(dialog._matches) == 0
+        
+        # Should not crash and should return early
+        dialog._replace_current()
+        
+        assert pane._editor.toPlainText() == "test content"
+        
+        dialog.deleteLater()
+    
+    def test_replace_current_with_negative_index(self, pane):
+        """_replace_current returns early when index is negative."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test content")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("test")
+        dialog._replace_edit.setText("abc")
+        dialog._on_query_changed()
+        
+        dialog._current_match_index = -1
+        
+        # Should not crash and should return early
+        dialog._replace_current()
+        
+        assert pane._editor.toPlainText() == "test content"
+        
+        dialog.deleteLater()
+    
+    def test_replace_all_with_no_matches(self, pane):
+        """_replace_all returns early when no matches."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test content")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("xyz")
+        dialog._replace_edit.setText("abc")
+        dialog._on_query_changed()
+        
+        assert len(dialog._matches) == 0
+        
+        # Should not crash and should return early
+        dialog._replace_all()
+        
+        assert pane._editor.toPlainText() == "test content"
+        
+        dialog.deleteLater()
+    
+    def test_replace_current_wraps_when_last_match_replaced(self, pane):
+        """_replace_current wraps index when last match is replaced."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("cat cat cat")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("cat")
+        dialog._replace_edit.setText("dog")
+        dialog._on_query_changed()
+        
+        assert len(dialog._matches) == 3
+        
+        # Move to the last match
+        dialog._current_match_index = 2
+        dialog._goto_current_match()
+        
+        # Replace it - should replace "cat cat dog"
+        dialog._replace_current()
+        
+        # After replace and re-search, there are still 2 "cat" matches
+        # The index should wrap to 0
+        assert dialog._current_match_index == 0
+        assert "dog" in pane._editor.toPlainText()
+        
+        dialog.deleteLater()
+    
+    def test_hide_event_clears_highlights_when_hidden(self, pane):
+        """hideEvent is called and clears highlights."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test test")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("test")
+        dialog._on_query_changed()
+        
+        # Set up highlights
+        assert len(dialog._extra_selections) > 0
+        
+        # Explicitly call hideEvent (simulating Qt hide)
+        from PySide6.QtGui import QHideEvent
+        hide_event = QHideEvent()
+        dialog.hideEvent(hide_event)
+        
+        # Highlights should be cleared
+        assert len(dialog._extra_selections) == 0
+        
+        dialog.deleteLater()
+    
+    # Note: Line 350 (current_match_index wrap-around in _replace_current) is theoretically
+    # unreachable because:
+    # 1. It requires _current_match_index >= len(self._matches)
+    # 2. But _search() is called at line 347, which resets index to 0 or finds appropriate index
+    # 3. The index can only become out of bounds if _search() doesn't update it correctly
+    # This is defensive code that protects against internal inconsistency that shouldn't occur
+    # in normal operation. It's good defensive programming but can't be practically tested.
