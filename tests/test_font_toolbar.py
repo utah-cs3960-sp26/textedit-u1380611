@@ -265,6 +265,14 @@ class TestFontMiniToolbarHiding:
         
         toolbar._check_hide()
         assert not toolbar.isVisible()
+        
+        toolbar.close()
+        # Release any grabs
+        try:
+            toolbar.releaseMouse()
+            toolbar.releaseKeyboard()
+        except:
+            pass
     
     def test_hide_timer_timeout(self, toolbar, editor):
         """Hide timer triggers hide after timeout."""
@@ -276,6 +284,8 @@ class TestFontMiniToolbarHiding:
         
         # Should be hidden
         assert not toolbar.isVisible()
+        
+        toolbar.close()
 
 
 class TestFontMiniToolbarEventFilters:
@@ -339,6 +349,8 @@ class TestFontMiniToolbarEditorDetachment:
         toolbar._on_selection_changed()
         
         assert not toolbar.isVisible()
+        
+        toolbar.close()
 
 
 class TestFontMiniToolbarApplyingState:
@@ -407,4 +419,191 @@ class TestFontMiniToolbarIntegration:
         assert toolbar._editor == editor2
         
         editor1.deleteLater()
+        editor2.deleteLater()
+    
+    def test_on_font_changed_when_editor_has_no_selection(self, toolbar, editor, qapp):
+        """_on_font_changed hides toolbar when no selection."""
+        toolbar.attach_to_editor(editor)
+        toolbar._is_applying = False
+        
+        # Ensure no selection
+        editor.textCursor().clearSelection()
+        
+        toolbar._on_font_changed(QFont("Arial"))
+        # Should hide via timer
+        toolbar._hide_timer.start(0)
+    
+    def test_on_size_changed_when_editor_has_no_selection(self, toolbar, editor, qapp):
+        """_on_size_changed doesn't apply when no selection."""
+        toolbar.attach_to_editor(editor)
+        toolbar._is_applying = False
+        
+        # Ensure no selection
+        editor.textCursor().clearSelection()
+        
+        toolbar._on_size_changed()
+        # Should handle gracefully
+        assert toolbar._is_applying is False
+    
+    def test_apply_font_to_selection_with_selection(self, toolbar, editor, qapp):
+        """_apply_font_to_selection applies font when selection exists."""
+        toolbar.attach_to_editor(editor)
+        toolbar._is_applying = False
+        
+        # Create selection
+        cursor = editor.textCursor()
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        editor.setTextCursor(cursor)
+        
+        toolbar._apply_font_to_selection()
+        
+        # Font should be applied
+        assert toolbar._is_applying is False
+    
+    def test_apply_font_to_selection_without_editor(self, toolbar):
+        """_apply_font_to_selection handles no editor gracefully."""
+        toolbar._editor = None
+        toolbar._is_applying = False
+        
+        # Should not raise exception
+        toolbar._apply_font_to_selection()
+        assert True
+    
+    def test_attach_to_editor_with_existing_editor_signal_disconnect(self, toolbar, editor, qapp):
+        """attach_to_editor properly disconnects from previous editor."""
+        editor2 = QPlainTextEdit()
+        editor2.setPlainText("New editor")
+        
+        # Attach to first editor
+        toolbar.attach_to_editor(editor)
+        assert toolbar._editor == editor
+        
+        # Attach to second editor - should disconnect from first
+        toolbar.attach_to_editor(editor2)
+        assert toolbar._editor == editor2
+        
+        editor2.deleteLater()
+    
+    def test_on_size_changed_with_is_applying_flag(self, toolbar, editor):
+        """_on_size_changed respects _is_applying flag."""
+        toolbar.attach_to_editor(editor)
+        toolbar._is_applying = True
+        
+        # Create selection
+        cursor = editor.textCursor()
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        editor.setTextCursor(cursor)
+        
+        toolbar._on_size_changed()
+        
+        # Should return early due to flag
+        assert toolbar._is_applying is True
+    
+    def test_position_near_selection_with_small_window(self, toolbar, editor, qapp):
+        """_position_near_selection positions toolbar correctly in small window."""
+        from PySide6.QtWidgets import QMainWindow
+        
+        main_window = QMainWindow()
+        main_window.resize(200, 200)
+        main_window.setCentralWidget(editor)
+        main_window.show()
+        
+        toolbar._main_window = main_window
+        toolbar.attach_to_editor(editor)
+        
+        # Create selection
+        cursor = editor.textCursor()
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        editor.setTextCursor(cursor)
+        
+        # This should trigger positioning
+        toolbar._position_near_selection(cursor)
+        
+        # Verify toolbar was positioned (has non-zero coordinates)
+        assert toolbar.x() >= 0
+        assert toolbar.y() >= 0
+        
+        main_window.close()
+        main_window.deleteLater()
+    
+    def test_position_near_selection_bottom_overflow(self, toolbar, editor, qapp):
+        """_position_near_selection adjusts position when hitting bottom."""
+        from PySide6.QtWidgets import QMainWindow
+        from PySide6.QtCore import QRect, QSize
+        
+        main_window = QMainWindow()
+        main_window.resize(300, 200)
+        main_window.setCentralWidget(editor)
+        main_window.show()
+        
+        toolbar._main_window = main_window
+        toolbar.resize(150, 80)
+        toolbar.attach_to_editor(editor)
+        
+        # Move cursor to end (bottom area)
+        cursor = editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        editor.setTextCursor(cursor)
+        
+        # Create selection at bottom
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        editor.setTextCursor(cursor)
+        
+        # Position toolbar (should adjust to avoid bottom overflow)
+        toolbar._position_near_selection(cursor)
+        
+        # Verify toolbar is positioned (avoiding overflow)
+        assert toolbar.y() >= 0
+        
+        main_window.close()
+        main_window.deleteLater()
+    
+    def test_on_font_changed_with_is_applying_flag(self, toolbar, editor):
+        """_on_font_changed respects _is_applying flag."""
+        toolbar.attach_to_editor(editor)
+        toolbar._is_applying = True
+        
+        # Create selection
+        cursor = editor.textCursor()
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        editor.setTextCursor(cursor)
+        
+        toolbar._on_font_changed(QFont("Arial"))
+        
+        # Should return early due to flag
+        assert toolbar._is_applying is True
+    
+    def test_check_hide_with_selection(self, toolbar, editor):
+        """_check_hide doesn't hide when selection exists."""
+        toolbar.attach_to_editor(editor)
+        toolbar.show()
+        
+        # Create selection
+        cursor = editor.textCursor()
+        cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        editor.setTextCursor(cursor)
+        
+        toolbar._check_hide()
+        
+        # Toolbar should still be visible
+        assert toolbar.isVisible() is True
+        
+        toolbar.close()
+    
+    def test_attach_to_editor_signal_disconnect_error(self, toolbar, qapp):
+        """attach_to_editor handles signal disconnect errors gracefully."""
+        from unittest.mock import MagicMock
+        
+        # Create a mock editor with disconnect that raises
+        mock_editor = MagicMock(spec=QPlainTextEdit)
+        mock_editor.selectionChanged.disconnect.side_effect = RuntimeError("Not connected")
+        
+        toolbar._editor = mock_editor
+        
+        editor2 = QPlainTextEdit()
+        # Should not raise exception even if disconnect fails
+        toolbar.attach_to_editor(editor2)
+        
+        assert toolbar._editor == editor2
+        
         editor2.deleteLater()

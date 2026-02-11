@@ -300,24 +300,124 @@ class TestThemeManagerWidget:
         widget.deleteLater()
 
 
+class TestColorButtonColorPicking:
+    """Tests for ColorButton color picking."""
+    
+    def test_color_changed_signal_emitted_on_valid_color(self, qapp):
+        """Test color_changed signal is emitted when valid color selected."""
+        from unittest.mock import patch
+        
+        btn = ColorButton("#ff0000")
+        signal_emitted = []
+        btn.color_changed.connect(lambda color: signal_emitted.append(color))
+        
+        with patch('PySide6.QtWidgets.QColorDialog.getColor') as mock_dialog:
+            from PySide6.QtGui import QColor
+            mock_dialog.return_value = QColor("#00ff00")
+            btn._pick_color()
+        
+        assert len(signal_emitted) == 1
+        assert signal_emitted[0] == "#00ff00"
+        btn.deleteLater()
+    
+    def test_color_not_changed_on_invalid_color(self, qapp):
+        """Test color is not changed when invalid color selected."""
+        from unittest.mock import patch
+        
+        btn = ColorButton("#ff0000")
+        signal_emitted = []
+        btn.color_changed.connect(lambda color: signal_emitted.append(color))
+        
+        with patch('PySide6.QtWidgets.QColorDialog.getColor') as mock_dialog:
+            from PySide6.QtGui import QColor
+            invalid_color = QColor()
+            invalid_color.setNamedColor("invalid")
+            mock_dialog.return_value = invalid_color
+            btn._pick_color()
+        
+        # Color should not change, no signal should be emitted
+        assert len(signal_emitted) == 0
+        assert btn.color == "#ff0000"
+        btn.deleteLater()
+
+
+class TestThemeManagerWidget:
+    """Tests for ThemeManagerWidget."""
+    
+    def test_theme_manager_creation(self, qapp):
+        """Test ThemeManagerWidget can be created."""
+        manager = ThemeManager()
+        widget = ThemeManagerWidget(manager)
+        assert widget is not None
+        widget.close()
+        widget.deleteLater()
+    
+    def test_load_themes_populates_list(self, qapp):
+        """Test _load_themes populates theme list."""
+        manager = ThemeManager()
+        widget = ThemeManagerWidget(manager)
+        widget._load_themes()
+        # Should have at least the builtin themes
+        assert widget._theme_list.count() > 0
+        widget.close()
+        widget.deleteLater()
+    
+    def test_theme_selection_updates_name_edit(self, qapp):
+        """Test selecting theme updates name edit."""
+        manager = ThemeManager()
+        widget = ThemeManagerWidget(manager)
+        widget._load_themes()
+        
+        # Get first item and select it
+        if widget._theme_list.count() > 0:
+            item = widget._theme_list.item(0)
+            widget._theme_list.setCurrentItem(item)
+            # Name edit should be populated
+            assert widget._name_edit.text() != ""
+        
+        widget.close()
+        widget.deleteLater()
+    
+    def test_new_theme_creates_unique_name(self, qapp, tmp_path):
+        """Test new theme gets unique name."""
+        import shutil
+        # Create temp theme directory
+        themes_dir = tmp_path / "themes"
+        themes_dir.mkdir()
+        
+        with patch('editor.theme_manager.get_themes_dir', return_value=str(themes_dir)):
+            manager = ThemeManager()
+            widget = ThemeManagerWidget(manager)
+            initial_count = widget._theme_list.count()
+            
+            # Create new theme
+            widget._on_new_theme()
+            
+            # Should have one more theme
+            assert widget._theme_list.count() > initial_count
+            
+            widget.close()
+            widget.deleteLater()
+
+
 class TestLineNumberColors:
-    """Tests for line number color extraction."""
-    
-    def test_get_line_number_colors_from_builtin(self, qapp):
-        """Test getting line number colors from theme."""
-        manager = ThemeManager()
-        manager.apply_theme_by_name("Dark")
-        colors = manager.get_line_number_colors()
-        assert "bg" in colors
-        assert "text" in colors
-        assert "current_line" in colors
-        assert "current_line_bg" in colors
-    
-    def test_line_number_colors_match_theme(self, qapp):
-        """Test line number colors match theme colors."""
-        manager = ThemeManager()
-        manager.apply_theme_by_name("Dark")
-        colors = manager.get_line_number_colors()
-        theme_colors = BUILTIN_THEME_COLORS["Dark"]
-        assert colors["bg"] == theme_colors["line_number_bg"]
-        assert colors["text"] == theme_colors["line_number_text"]
+     """Tests for line number color extraction."""
+     
+     def test_get_line_number_colors_from_builtin(self, qapp):
+         """Test getting line number colors from theme."""
+         manager = ThemeManager()
+         manager.apply_theme_by_name("Dark")
+         colors = manager.get_line_number_colors()
+         assert "bg" in colors
+         assert "text" in colors
+         assert "current_line" in colors
+         assert "current_line_bg" in colors
+     
+     def test_line_number_colors_match_theme(self, qapp):
+         """Test line number colors match theme colors."""
+         manager = ThemeManager()
+         manager.apply_theme_by_name("Dark")
+         colors = manager.get_line_number_colors()
+         theme_colors = BUILTIN_THEME_COLORS["Dark"]
+         assert colors["bg"] == theme_colors["line_number_bg"]
+         assert colors["text"] == theme_colors["line_number_text"]

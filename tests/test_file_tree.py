@@ -407,3 +407,113 @@ class TestFileTreeViewMouseEvents:
         view.mousePressEvent(event)
         assert len(signal_emitted) == 0
         view.deleteLater()
+    
+    def test_file_tree_opens_folder_successfully(self, qapp, tmp_path):
+        """open_folder loads directory structure."""
+        tree = FileTree()
+        
+        # Create test file structure
+        test_dir = tmp_path / "test_project"
+        test_dir.mkdir()
+        (test_dir / "file.txt").write_text("test")
+        
+        result = tree.open_folder(str(test_dir))
+        
+        # Verify folder was opened successfully
+        assert result is True
+        assert tree.root_path == str(test_dir)
+        
+        tree.deleteLater()
+    
+    def test_file_tree_refresh_action_exists(self, qapp, tmp_path):
+        """FileTree has refresh action that can be triggered."""
+        tree = FileTree()
+        
+        test_dir = tmp_path / "test_project"
+        test_dir.mkdir()
+        
+        tree.open_folder(str(test_dir))
+        
+        # Verify refresh can be called without error
+        tree.refresh()
+        assert True
+        
+        tree.deleteLater()
+    
+    def test_file_tree_closes_folder(self, qapp, tmp_path):
+        """close_folder clears the current folder."""
+        tree = FileTree()
+        
+        test_dir = tmp_path / "test_project"
+        test_dir.mkdir()
+        
+        tree.open_folder(str(test_dir))
+        assert tree.root_path == str(test_dir)
+        
+        tree.close_folder()
+        assert tree.root_path is None
+        
+        tree.deleteLater()
+
+
+class TestCollapsibleSidebar:
+    """Tests for CollapsibleSidebar."""
+    
+    def test_sidebar_set_content(self, qapp):
+        """set_content updates the content widget."""
+        from PySide6.QtWidgets import QLabel
+        from editor.file_tree import CollapsibleSidebar
+        
+        sidebar = CollapsibleSidebar()
+        label1 = QLabel("Content 1")
+        label2 = QLabel("Content 2")
+        
+        sidebar.set_content(label1)
+        assert sidebar._content_widget == label1
+        
+        sidebar.set_content(label2)
+        assert sidebar._content_widget == label2
+        
+        sidebar.deleteLater()
+    
+    def test_sidebar_set_collapsed_same_state(self, qapp):
+        """set_collapsed with same state returns early."""
+        from editor.file_tree import CollapsibleSidebar
+        
+        sidebar = CollapsibleSidebar()
+        
+        signal_count = []
+        sidebar.collapsed_changed.connect(lambda x: signal_count.append(x))
+        
+        sidebar.set_collapsed(False)  # Already false
+        
+        # Signal should not be emitted on no-op
+        assert len(signal_count) == 0
+        
+        sidebar.deleteLater()
+    
+    def test_sidebar_toggle_collapsed(self, qapp):
+        """toggle_collapsed changes state."""
+        from editor.file_tree import CollapsibleSidebar
+        
+        sidebar = CollapsibleSidebar()
+        initial = sidebar.is_collapsed
+        
+        sidebar.toggle_collapsed()
+        
+        assert sidebar.is_collapsed != initial
+        
+        sidebar.deleteLater()
+    
+    def test_sidebar_internal_toggle(self, qapp):
+        """_toggle_collapsed calls toggle_collapsed."""
+        from editor.file_tree import CollapsibleSidebar
+        
+        sidebar = CollapsibleSidebar()
+        initial = sidebar.is_collapsed
+        
+        sidebar._toggle_collapsed()
+        
+        assert sidebar.is_collapsed != initial
+        
+        sidebar.deleteLater()

@@ -712,3 +712,306 @@ class TestEditorPaneModificationState:
         
         # Tab should be marked as modified
         assert 0 in pane._tab_bar._modified_tabs
+    
+    def test_set_current_document_success(self, pane):
+        """set_current_document switches to the document."""
+        doc1 = pane.add_new_document()
+        doc2 = pane.add_new_document()
+        
+        result = pane.set_current_document(doc1)
+        assert result is True
+        assert pane.current_document == doc1
+    
+    def test_set_current_document_failure(self, pane):
+        """set_current_document returns False for unknown document."""
+        pane.add_new_document()
+        unknown_doc = Document(content="Not in pane")
+        
+        result = pane.set_current_document(unknown_doc)
+        assert result is False
+    
+    def test_set_word_wrap_enabled(self, pane):
+        """set_word_wrap enables line wrapping."""
+        pane.set_word_wrap(True)
+        # LineWrapMode.WidgetWidth
+        from editor.line_number_editor import LineNumberedEditor
+        assert pane._editor.lineWrapMode() == LineNumberedEditor.LineWrapMode.WidgetWidth
+    
+    def test_set_word_wrap_disabled(self, pane):
+        """set_word_wrap disables line wrapping."""
+        pane.set_word_wrap(False)
+        # LineWrapMode.NoWrap
+        from editor.line_number_editor import LineNumberedEditor
+        assert pane._editor.lineWrapMode() == LineNumberedEditor.LineWrapMode.NoWrap
+    
+    def test_tab_moved_same_index(self, pane):
+        """_on_tab_moved returns early if from_index == to_index."""
+        pane.add_new_document()
+        pane.add_new_document()
+        
+        # Call with same indices - should be no-op
+        pane._on_tab_moved(0, 0)
+        
+        # Documents should be in original order
+        assert len(pane.documents) == 2
+    
+    def test_tab_moved_invalid_from_index(self, pane):
+        """_on_tab_moved returns early if from_index is out of bounds."""
+        pane.add_new_document()
+        
+        # Call with invalid from_index - should be no-op
+        pane._on_tab_moved(99, 0)
+        
+        assert len(pane.documents) == 1
+    
+    def test_tab_moved_invalid_to_index(self, pane):
+        """_on_tab_moved returns early if to_index is out of bounds."""
+        pane.add_new_document()
+        
+        # Call with invalid to_index - should be no-op
+        pane._on_tab_moved(0, 99)
+        
+        assert len(pane.documents) == 1
+    
+    def test_tab_moved_swap_documents(self, pane):
+        """_on_tab_moved reorders documents correctly."""
+        doc1 = pane.add_new_document()
+        doc2 = pane.add_new_document()
+        
+        pane._on_tab_moved(0, 1)
+        
+        # Documents should be reordered
+        assert pane.documents[0] == doc2
+        assert pane.documents[1] == doc1
+    
+    def test_save_document_with_no_file_path(self, pane):
+        """_save_document returns False if document has no file path."""
+        doc = pane.add_new_document()
+        
+        result = pane._save_document(doc)
+        assert result is False
+    
+    def test_save_document_with_file_path_failure(self, pane, monkeypatch):
+        """_save_document returns False if write fails."""
+        from editor.file_handler import FileResult, FileError
+        
+        doc = pane.add_new_document()
+        doc.file_path = "/fake/path.txt"
+        
+        # Mock write_file to return failure
+        mock_result = FileResult(success=False, error=FileError.WRITE_ERROR)
+        monkeypatch.setattr(pane._file_handler, "write_file", 
+                          lambda path, content: mock_result)
+        
+        result = pane._save_document(doc)
+        assert result is False
+    
+    def test_save_document_with_file_path_success(self, pane, monkeypatch):
+        """_save_document returns True if write succeeds."""
+        from editor.file_handler import FileResult
+        
+        doc = pane.add_new_document()
+        doc.file_path = "/fake/path.txt"
+        doc._is_modified = True  # Mark as modified to test the flow
+        
+        # Mock write_file to return success
+        mock_result = FileResult(success=True)
+        monkeypatch.setattr(pane._file_handler, "write_file", 
+                          lambda path, content: mock_result)
+        
+        result = pane._save_document(doc)
+        assert result is True
+        assert doc.is_modified is False  # Should be marked as saved
+
+
+class TestSplitContainerAddDocuments:
+    """Tests for SplitContainer document operations."""
+    
+    def test_add_document_to_active_pane(self, container):
+        """add_document adds document to active pane."""
+        doc = Document(content="Test")
+        container.add_document(doc)
+        
+        assert doc in container.active_pane.documents
+    
+    def test_add_new_document_returns_document(self, container):
+        """add_new_document creates and returns document."""
+        doc = container.add_new_document()
+        
+        assert isinstance(doc, Document)
+        assert doc in container.all_documents
+    
+    def test_all_documents_from_all_panes(self, container):
+        """all_documents returns documents from all panes."""
+        doc1 = container.add_new_document()
+        doc2 = container.add_new_document()
+        
+        container.create_split(doc2, "right")
+        
+        doc3 = container.add_new_document()
+        
+        all_docs = container.all_documents
+        assert doc1 in all_docs
+        assert doc2 in all_docs
+        assert doc3 in all_docs
+    
+    def test_has_unsaved_changes_no_changes(self, container):
+        """has_unsaved_changes returns False when no changes."""
+        doc = container.add_new_document()
+        
+        result = container.has_unsaved_changes()
+        assert result is False
+    
+    def test_has_unsaved_changes_with_changes(self, container):
+        """has_unsaved_changes returns True when changes exist."""
+        doc = container.add_new_document()
+        doc._is_modified = True
+        
+        result = container.has_unsaved_changes()
+        assert result is True
+
+
+class TestSplitContainerWordWrap:
+    """Tests for word wrap and formatting."""
+    
+    def test_set_word_wrap_all_panes(self, container):
+        """set_word_wrap applies to all panes."""
+        doc = container.add_new_document()
+        container.create_split(doc, "right")
+        
+        container.set_word_wrap(True)
+        
+        # Verify both panes have word wrap enabled
+        for pane in container._panes:
+            from editor.line_number_editor import LineNumberedEditor
+            assert pane._editor.lineWrapMode() == LineNumberedEditor.LineWrapMode.WidgetWidth
+    
+    def test_set_line_number_colors_all_panes(self, container):
+        """set_line_number_colors applies to all panes."""
+        doc = container.add_new_document()
+        container.create_split(doc, "right")
+        
+        container.set_line_number_colors("#fff", "#000", "#ff0", "#0f0")
+        
+        # Verify both panes have colors set
+        for pane in container._panes:
+            assert pane._editor._bg_color.name() == "#ffffff"
+
+
+class TestSplitContainerGuardClauses:
+    """Tests for guard clauses in SplitContainer."""
+    
+    def test_active_document_with_no_active_pane(self, container):
+        """active_document returns None when no active pane."""
+        container._active_pane = None
+        result = container.active_document
+        assert result is None
+    
+    def test_add_document_with_no_active_pane(self, container):
+        """add_document does nothing when no active pane."""
+        container._active_pane = None
+        doc = Document(content="Test")
+        
+        # Should not raise exception
+        container.add_document(doc)
+        assert True
+    
+    def test_add_new_document_with_no_active_pane(self, container):
+        """add_new_document returns empty doc when no active pane."""
+        container._active_pane = None
+        doc = container.add_new_document()
+        
+        assert isinstance(doc, Document)
+        assert doc.content == ""
+    
+    def test_create_split_already_split(self, container):
+        """create_split returns False if already split."""
+        doc = container.add_new_document()
+        container.create_split(doc, "right")
+        
+        assert container.is_split is True
+        
+        # Try to split again
+        result = container.create_split(doc, "left")
+        assert result is False
+    
+    def test_create_split_document_not_found(self, container):
+        """create_split returns False if document not in container."""
+        doc1 = container.add_new_document()
+        doc2 = Document(content="Not in container")
+        
+        result = container.create_split(doc2, "right")
+        assert result is False
+    
+    def test_create_split_with_one_document_works(self, container):
+        """create_split works even with one document."""
+        doc = container.add_new_document()
+        
+        # Can split with one document
+        result = container.create_split(doc, "right")
+        assert result is True
+        assert container.is_split is True
+
+
+class TestSplitContainerMergeSwap:
+    """Tests for merge and swap operations."""
+    
+    def test_merge_panes_not_split(self, container):
+        """merge_panes returns early if not split."""
+        doc = container.add_new_document()
+        
+        assert container.is_split is False
+        
+        container.merge_panes()  # Should do nothing
+        
+        assert container.is_split is False
+    
+    def test_merge_panes_combines_all(self, container):
+        """merge_panes combines documents from both panes."""
+        doc1 = container.add_new_document()
+        doc1._content = "Doc 1"
+        
+        doc2 = container.add_new_document()
+        doc2._content = "Doc 2"
+        
+        container.create_split(doc2, "right")
+        
+        doc3 = container.add_new_document()
+        doc3._content = "Doc 3"
+        
+        # Merge
+        container.merge_panes()
+        
+        assert container.is_split is False
+        all_docs = container.all_documents
+        assert doc1 in all_docs
+        assert doc2 in all_docs
+        assert doc3 in all_docs
+    
+    def test_swap_panes_not_split(self, container):
+        """swap_panes returns early if not split."""
+        doc = container.add_new_document()
+        
+        assert container.is_split is False
+        
+        container.swap_panes()  # Should do nothing
+        
+        assert container.is_split is False
+    
+    def test_swap_panes_changes_order(self, container):
+        """swap_panes exchanges left and right panes."""
+        doc1 = container.add_new_document()
+        doc2 = container.add_new_document()
+        
+        container.create_split(doc2, "right")
+        
+        pane1_before = container._panes[0]
+        pane2_before = container._panes[1]
+        
+        container.swap_panes()
+        
+        pane1_after = container._panes[0]
+        pane2_after = container._panes[1]
+        
+        assert pane1_before != pane1_after
+        assert pane2_before != pane2_after

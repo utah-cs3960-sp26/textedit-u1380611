@@ -273,3 +273,56 @@ class TestLineNumberAreaScrolling:
         editor._update_line_number_area(vp_rect, 0)
         
         assert True  # Just verify no exceptions
+    
+    def test_line_number_area_paint_event_coverage(self, editor):
+        """LineNumberArea paintEvent calls line_number_area_paint_event."""
+        editor.setPlainText("Line 1\nLine 2")
+        area = editor._line_number_area
+        
+        # Create a paint event
+        event = MagicMock()
+        event.rect.return_value = QRect(0, 0, area.width(), 100)
+        
+        # This should call the editor's paint event handler
+        area.paintEvent(event)
+        assert True
+    
+    def test_line_numbered_editor_font_change(self, editor):
+        """Setting font updates line number area."""
+        original_font = editor.font()
+        new_font = QFont("Courier New", 12)
+        
+        editor.setFont(new_font)
+        
+        # Width should potentially change with different font
+        width1 = editor.line_number_area_width()
+        
+        editor.setFont(original_font)
+        width2 = editor.line_number_area_width()
+        
+        # Just verify no exceptions
+        assert width1 > 0
+        assert width2 > 0
+    
+    def test_set_line_number_colors(self, editor):
+        """set_line_number_colors updates all color properties."""
+        editor.set_line_number_colors("#ffffff", "#000000", "#ffff00", "#00ff00")
+        
+        assert editor._bg_color.name() == "#ffffff"
+        assert editor._text_color.name() == "#000000"
+        assert editor._current_line_color.name() == "#ffff00"
+        assert editor._current_line_bg.name() == "#00ff00"
+    
+    def test_resize_event_updates_line_number_area_geometry(self, editor):
+        """resizeEvent updates line number area geometry."""
+        editor.setGeometry(0, 0, 400, 300)
+        editor.show()
+        
+        # Get line number area geometry
+        area = editor._line_number_area
+        area_width = area.width()
+        
+        # Area should have correct width
+        assert area_width > 0
+        
+        editor.close()

@@ -3,7 +3,7 @@ Tests for the EditorTabBar module.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from PySide6.QtWidgets import QApplication, QToolButton
 from PySide6.QtCore import Qt, QPoint, QMimeData, QSize
 from PySide6.QtGui import QMouseEvent, QDragEnterEvent, QDropEvent
@@ -329,3 +329,109 @@ class TestTabBarDropIndex:
         tab_bar.addTab("Tab 2")
         index = tab_bar.get_drop_index(QPoint(1000, 0))
         assert index == tab_bar.count()
+    
+    def test_paint_event_renders_modified_tabs(self, tab_bar):
+        """paintEvent renders modified tabs with blue dot."""
+        tab_bar.addTab("Tab 1")
+        tab_bar.setTabModified(0, True)
+        
+        # Trigger paint event
+        from PySide6.QtGui import QPaintEvent
+        from PySide6.QtCore import QRect
+        
+        event = QPaintEvent(QRect(0, 0, tab_bar.width(), tab_bar.height()))
+        tab_bar.paintEvent(event)
+        
+        assert True  # Just verify no exceptions
+    
+    def test_tab_removed_repositions_button(self, tab_bar):
+        """tabRemoved repositions the + button."""
+        tab_bar.addTab("Tab 1")
+        tab_bar.addTab("Tab 2")
+        
+        # Remove tab and verify button repositioned
+        tab_bar.removeTab(0)
+        
+        assert tab_bar.count() == 1
+        assert tab_bar._new_tab_button is not None
+    
+    def test_tab_layout_change_repositions_button(self, tab_bar):
+        """tabLayoutChange repositions the + button."""
+        tab_bar.addTab("Tab 1")
+        tab_bar.addTab("Tab 2")
+        
+        tab_bar.tabLayoutChange()
+        
+        assert tab_bar._new_tab_button is not None
+    
+    def test_mouse_move_without_drag_start(self, tab_bar):
+        """mouseMoveEvent returns early if no drag start."""
+        tab_bar.addTab("Tab 1")
+        tab_bar._drag_start_pos = None
+        
+        event = QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            QPoint(50, tab_bar.height() + 10),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier
+        )
+        
+        tab_bar.mouseMoveEvent(event)
+        
+        assert True
+    
+    def test_mouse_move_outside_vertical_bounds_triggers_external_drag(self, tab_bar):
+        """mouseMoveEvent triggers external drag when moving outside vertical bounds."""
+        tab_bar.addTab("Tab 1")
+        tab_bar._drag_tab_index = 0
+        tab_bar._drag_start_pos = QPoint(10, 10)
+        
+        # Move mouse below tab bar
+        event = QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            QPoint(10, tab_bar.height() + 100),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier
+        )
+        
+        signal_emitted = []
+        tab_bar.external_drag_started.connect(lambda idx: signal_emitted.append(idx))
+        
+        tab_bar.mouseMoveEvent(event)
+        
+        # External drag should be initiated
+        assert len(signal_emitted) == 1
+    
+    def test_mouse_release_clears_drag_state(self, tab_bar):
+        """mouseReleaseEvent clears drag state."""
+        tab_bar.addTab("Tab 1")
+        tab_bar._drag_tab_index = 0
+        tab_bar._drag_start_pos = QPoint(10, 10)
+        
+        event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonRelease,
+            QPoint(10, 10),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier
+        )
+        
+        tab_bar.mouseReleaseEvent(event)
+        
+        # Drag state should be cleared
+        assert tab_bar._drag_start_pos is None
+        assert tab_bar._drag_tab_index < 0
+    
+    def test_resize_event_repositions_button(self, tab_bar):
+        """resizeEvent repositions the + button."""
+        from PySide6.QtCore import QSize
+        from PySide6.QtGui import QResizeEvent
+        
+        tab_bar.addTab("Tab 1")
+        
+        event = QResizeEvent(QSize(200, 30), QSize(100, 30))
+        tab_bar.resizeEvent(event)
+        
+        assert tab_bar._new_tab_button is not None

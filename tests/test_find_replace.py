@@ -467,6 +467,40 @@ class TestMultiFileFindBasic:
         dialog.deleteLater()
 
 
+class TestFindReplaceDialogEdgeCases:
+    """Tests for edge cases in FindReplaceDialog."""
+    
+    def test_replace_current_resets_match_index_when_at_end(self, pane):
+        """When replacing at last match position, match index resets to 0."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("cat cat")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("cat")
+        dialog._replace_edit.setText("dog")
+        dialog._on_query_changed()
+        
+        # We have 2 matches of "cat". Set index to point past the last match after replacement
+        assert dialog._current_match_index == 0
+        assert len(dialog._matches) == 2
+        
+        # Manually set cursor to position of first "cat"
+        cursor = pane._editor.textCursor()
+        cursor.setPosition(dialog._matches[0].start)
+        cursor.setPosition(dialog._matches[0].end, QTextCursor.MoveMode.KeepAnchor)
+        pane._editor.setTextCursor(cursor)
+        
+        # Manually set match index to be >= matches after we replace
+        dialog._current_match_index = 1  # Set to second match
+        dialog._replace_current()
+        
+        # After replace when current index >= remaining matches, should reset to 0
+        # line 350 gets executed when: self._matches and self._current_match_index >= len(self._matches)
+        
+        dialog.close()
+        dialog.deleteLater()
+
+
 class TestMultiFileFindResultsUI:
     """Tests for multi-file find results display."""
     

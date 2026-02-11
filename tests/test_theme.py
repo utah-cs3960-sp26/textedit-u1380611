@@ -325,3 +325,44 @@ class TestLoadSettingsErrorHandling:
         # Should not raise exception
         theme_manager._save_settings()
         assert True  # Made it without exception
+    
+    def test_delete_custom_theme_with_io_error(self, theme_manager, monkeypatch, tmp_path):
+        """delete_custom_theme handles IOError/KeyError gracefully."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        themes_dir = tmp_path / ".textedit" / "themes"
+        themes_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Reset singleton
+        ThemeManager._instance = None
+        manager = ThemeManager()
+        
+        # Mock os.remove to raise IOError
+        original_remove = os.remove
+        def failing_remove(path):
+            raise IOError("Cannot delete")
+        
+        monkeypatch.setattr("os.remove", failing_remove)
+        
+        # Should not raise exception even if remove fails
+        manager.delete_custom_theme("NonExistent")
+        assert True  # Made it without exception
+    
+    def test_get_builtin_theme_names(self, theme_manager):
+        """get_builtin_theme_names returns list of builtin themes."""
+        names = theme_manager.get_builtin_theme_names()
+        
+        assert isinstance(names, list)
+        assert "Dark" in names
+        assert "Light" in names
+        assert len(names) > 0
+    
+    def test_get_line_number_colors(self, theme_manager):
+        """get_line_number_colors returns color dictionary."""
+        theme_manager.apply_theme(Theme.DARK)
+        colors = theme_manager.get_line_number_colors()
+        
+        assert isinstance(colors, dict)
+        assert "bg" in colors
+        assert "text" in colors
+        assert "current_line" in colors
+        assert "current_line_bg" in colors
