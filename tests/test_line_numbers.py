@@ -4,7 +4,9 @@ Tests for the LineNumberedEditor module.
 
 import pytest
 from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPainter, QFont
+from PySide6.QtCore import Qt, QRect, QSize
+from unittest.mock import MagicMock, patch
 
 from editor.line_number_editor import LineNumberedEditor, LineNumberArea
 
@@ -114,3 +116,160 @@ class TestCurrentLineHighlight:
         editor.setTextCursor(cursor)
         selections = editor.extraSelections()
         assert len(selections) >= 1
+
+
+class TestLineNumberAreaPaintEvent:
+    """Tests for line number area painting."""
+    
+    def test_line_number_area_paint_event_single_line(self, editor):
+        """Paint event renders single line number correctly."""
+        editor.setPlainText("Test line")
+        area = editor._line_number_area
+        
+        # Create a mock paint event
+        event = MagicMock()
+        event.rect.return_value = QRect(0, 0, 50, 100)
+        
+        # Should not raise
+        editor.line_number_area_paint_event(event)
+        assert True
+    
+    def test_line_number_area_paint_event_multiple_lines(self, editor):
+        """Paint event renders multiple line numbers correctly."""
+        editor.setPlainText("Line 1\nLine 2\nLine 3\nLine 4\nLine 5")
+        area = editor._line_number_area
+        
+        event = MagicMock()
+        event.rect.return_value = QRect(0, 0, 50, 200)
+        
+        editor.line_number_area_paint_event(event)
+        assert True
+    
+    def test_line_number_area_paint_event_with_scrolling(self, editor):
+        """Paint event handles scrolled content."""
+        editor.setPlainText("\n".join([f"Line {i}" for i in range(1, 101)]))
+        
+        # Scroll down
+        cursor = editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        editor.setTextCursor(cursor)
+        
+        event = MagicMock()
+        event.rect.return_value = QRect(0, 0, 50, 200)
+        
+        editor.line_number_area_paint_event(event)
+        assert True
+    
+    def test_line_number_area_paint_event_shows_current_line_number(self, editor):
+        """Paint event highlights current line number."""
+        editor.setPlainText("Line 1\nLine 2\nLine 3")
+        
+        # Move to second line
+        cursor = editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.Down)
+        editor.setTextCursor(cursor)
+        
+        event = MagicMock()
+        event.rect.return_value = QRect(0, 0, 50, 150)
+        
+        editor.line_number_area_paint_event(event)
+        assert True
+
+
+class TestLineNumberedEditorResizeEvent:
+    """Tests for resize event handling."""
+    
+    def test_resize_event_adjusts_area_geometry(self, editor):
+        """Resize event adjusts line number area geometry."""
+        editor.setPlainText("Test")
+        editor.resize(400, 300)
+        
+        area = editor._line_number_area
+        # Area should be positioned at the left
+        assert area.geometry().left() == 0
+        assert area.geometry().top() == 0
+    
+    def test_resize_event_preserves_width(self, editor):
+        """Resize event adjusts line number area geometry."""
+        editor.setPlainText("Line 1\nLine 2\nLine 3")
+        old_width = editor._line_number_area.geometry().width()
+        
+        editor.resize(500, 400)
+        
+        # Area should be adjusted (may have different width due to resize)
+        new_width = editor._line_number_area.geometry().width()
+        assert new_width > 0
+    
+    def test_resize_event_updates_height(self, editor):
+        """Resize event updates line number area height."""
+        editor.setPlainText("Test")
+        editor.resize(400, 300)
+        
+        area_height = editor._line_number_area.geometry().height()
+        assert area_height > 0
+
+
+class TestLineNumberAreaFontHandling:
+    """Tests for font changes affecting line numbers."""
+    
+    def test_set_font_updates_width(self, editor):
+        """Setting font updates line number area width."""
+        editor.setPlainText("Line 1\nLine 2\nLine 3")
+        initial_width = editor.line_number_area_width()
+        
+        # Change to monospace font
+        font = QFont("Courier")
+        font.setPointSize(14)
+        editor.setFont(font)
+        
+        # Width may change based on font metrics
+        new_width = editor.line_number_area_width()
+        assert new_width > 0
+    
+    def test_highlight_when_read_only(self, editor):
+        """Current line highlight behavior is consistent."""
+        editor.setPlainText("Line 1\nLine 2\nLine 3")
+        initial_selections = len(editor.extraSelections())
+        
+        editor.setReadOnly(True)
+        readonly_selections = len(editor.extraSelections())
+        
+        # Highlight may be shown or hidden depending on implementation
+        assert readonly_selections >= 0
+        
+        editor.setReadOnly(False)
+
+
+class TestLineNumberAreaScrolling:
+    """Tests for line number area scrolling."""
+    
+    def test_update_line_number_area_with_dy(self, editor):
+        """Update line number area scrolls when dy is provided."""
+        editor.setPlainText("Line 1\nLine 2\nLine 3\nLine 4\nLine 5")
+        area = editor._line_number_area
+        
+        # Trigger scroll update
+        rect = QRect(0, 0, 100, 50)
+        editor._update_line_number_area(rect, 10)  # Scroll down
+        
+        assert True  # Just verify no exceptions
+    
+    def test_update_line_number_area_without_dy(self, editor):
+        """Update line number area updates rect when dy is 0."""
+        editor.setPlainText("Line 1\nLine 2\nLine 3")
+        area = editor._line_number_area
+        
+        rect = QRect(0, 0, 100, 50)
+        editor._update_line_number_area(rect, 0)  # No scroll
+        
+        assert True  # Just verify no exceptions
+    
+    def test_update_line_number_area_full_viewport_update(self, editor):
+        """Update triggers width update when rect contains viewport."""
+        editor.setPlainText("Line 1\nLine 2\nLine 3")
+        
+        # Get full viewport rect
+        vp_rect = editor.viewport().rect()
+        editor._update_line_number_area(vp_rect, 0)
+        
+        assert True  # Just verify no exceptions

@@ -173,6 +173,43 @@ class TestDocumentUndoHistory:
         assert len(doc._redo_stack) == 0
 
 
+class TestDocumentPropertySetters:
+    """Tests for Document property setters."""
+    
+    def test_file_path_setter(self):
+        """file_path setter updates internal state."""
+        doc = Document()
+        assert doc.file_path is None
+        
+        doc.file_path = "/path/to/file.txt"
+        assert doc.file_path == "/path/to/file.txt"
+        
+        doc.file_path = "/another/path.txt"
+        assert doc.file_path == "/another/path.txt"
+    
+    def test_document_equality_with_non_document(self):
+        """Document __eq__ returns False when compared with non-Document."""
+        doc = Document()
+        assert (doc == "not a document") is False
+        assert (doc == 42) is False
+        assert (doc == None) is False
+    
+    def test_cursor_position_setter(self):
+        """cursor_position setter updates state."""
+        doc = Document()
+        pos = CursorPosition(line=5, column=10)
+        doc.cursor_position = pos
+        assert doc.cursor_position == pos
+    
+    def test_scroll_position_setter(self):
+        """scroll_position setter updates state."""
+        doc = Document()
+        assert doc.scroll_position == (0, 0)
+        
+        doc.scroll_position = (100, 200)
+        assert doc.scroll_position == (100, 200)
+
+
 class TestDocumentHtmlContent:
     """Tests for HTML content property."""
     

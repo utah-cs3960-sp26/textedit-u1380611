@@ -134,6 +134,78 @@ class TestFileHandlerWrite:
         assert test_file.read_text(encoding="utf-8") == test_content
 
 
+class TestFileHandlerErrors:
+    """Tests for error handling in FileHandler."""
+    
+    def test_read_permission_error(self, tmp_path, monkeypatch):
+        """Reading a file with permission denied returns PERMISSION_ERROR."""
+        test_file = tmp_path / "noaccess.txt"
+        test_file.write_text("content", encoding="utf-8")
+        
+        # Mock Path.read_text to raise PermissionError
+        original_read = Path.read_text
+        def mock_read(*args, **kwargs):
+            raise PermissionError("Access denied")
+        
+        monkeypatch.setattr(Path, "read_text", mock_read)
+        
+        result = FileHandler.read_file(str(test_file))
+        
+        assert result.success is False
+        assert result.error == FileError.PERMISSION_ERROR
+        assert "Permission denied" in result.error_message
+    
+    def test_read_oserror(self, tmp_path, monkeypatch):
+        """Reading a file with OSError returns READ_ERROR."""
+        test_file = tmp_path / "oserror.txt"
+        test_file.write_text("content", encoding="utf-8")
+        
+        # Mock Path.read_text to raise OSError
+        original_read = Path.read_text
+        def mock_read(*args, **kwargs):
+            raise OSError("IO error")
+        
+        monkeypatch.setattr(Path, "read_text", mock_read)
+        
+        result = FileHandler.read_file(str(test_file))
+        
+        assert result.success is False
+        assert result.error == FileError.READ_ERROR
+        assert "Error reading file" in result.error_message
+    
+    def test_write_permission_error(self, tmp_path, monkeypatch):
+        """Writing with permission denied returns PERMISSION_ERROR."""
+        test_file = tmp_path / "noaccess.txt"
+        
+        # Mock Path.write_text to raise PermissionError
+        def mock_write(*args, **kwargs):
+            raise PermissionError("Access denied")
+        
+        monkeypatch.setattr(Path, "write_text", mock_write)
+        
+        result = FileHandler.write_file(str(test_file), "content")
+        
+        assert result.success is False
+        assert result.error == FileError.PERMISSION_ERROR
+        assert "Permission denied" in result.error_message
+    
+    def test_write_oserror(self, tmp_path, monkeypatch):
+        """Writing with OSError returns WRITE_ERROR."""
+        test_file = tmp_path / "oserror.txt"
+        
+        # Mock Path.write_text to raise OSError
+        def mock_write(*args, **kwargs):
+            raise OSError("IO error")
+        
+        monkeypatch.setattr(Path, "write_text", mock_write)
+        
+        result = FileHandler.write_file(str(test_file), "content")
+        
+        assert result.success is False
+        assert result.error == FileError.WRITE_ERROR
+        assert "Error writing file" in result.error_message
+
+
 class TestFileHandlerRoundTrip:
     """Tests for read/write round-trip behavior."""
     

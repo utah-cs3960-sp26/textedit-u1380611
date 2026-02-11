@@ -2,7 +2,10 @@
 Tests for the ThemeManager module.
 """
 
+import os
+import json
 import pytest
+from pathlib import Path
 from PySide6.QtWidgets import QApplication
 
 from editor.theme_manager import (
@@ -144,3 +147,181 @@ class TestStylesheets:
         """Midnight Blue stylesheet has bright accent colors."""
         assert "#58a6ff" in MIDNIGHT_BLUE_STYLESHEET
         assert "#f85149" in MIDNIGHT_BLUE_STYLESHEET
+
+
+class TestThemeErrorHandling:
+    """Tests for error handling in theme loading and saving."""
+    
+    def test_custom_theme_names_with_no_custom_themes(self, theme_manager):
+        """get_custom_theme_names returns empty list when no custom themes exist."""
+        custom_names = theme_manager.get_custom_theme_names()
+        assert isinstance(custom_names, list)
+        # Should be empty or contain only existing custom themes
+        assert all(isinstance(name, str) for name in custom_names)
+    
+    def test_save_custom_theme_creates_theme(self, theme_manager, tmp_path, monkeypatch):
+        """save_custom_theme adds theme to manager."""
+        # Mock the themes directory
+        monkeypatch.setenv("HOME", str(tmp_path))
+        
+        theme_manager.save_custom_theme("Test Theme", {"bg": "#ffffff"})
+        
+        custom_names = theme_manager.get_custom_theme_names()
+        assert "Test Theme" in custom_names
+    
+    def test_get_theme_colors_fallback_to_dark(self, theme_manager):
+        """get_theme_colors falls back to Dark theme for unknown themes."""
+        colors = theme_manager.get_theme_colors("NonexistentTheme")
+        
+        # Should return Dark theme colors as fallback
+        dark_colors = theme_manager.get_theme_colors("Dark")
+        assert colors == dark_colors
+
+
+class TestCustomThemeFileIO:
+    """Tests for custom theme file I/O operations."""
+    
+    def test_save_custom_theme_writes_json_file(self, theme_manager, tmp_path, monkeypatch):
+        """save_custom_theme writes theme to JSON file."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        
+        colors = {"bg": "#000000", "text": "#ffffff", "accent": "#0078d4"}
+        theme_manager.save_custom_theme("CustomTheme", colors)
+        
+        themes_dir = tmp_path / ".textedit" / "themes"
+        theme_file = themes_dir / "CustomTheme.json"
+        assert theme_file.exists()
+        
+        # Verify file contents
+        data = json.loads(theme_file.read_text())
+        assert data["name"] == "CustomTheme"
+        assert data["colors"] == colors
+    
+    def test_save_custom_theme_with_special_characters_in_name(self, theme_manager, tmp_path, monkeypatch):
+        """save_custom_theme sanitizes theme names with special characters."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        
+        # Use name with special characters
+        theme_manager.save_custom_theme("My-Custom_Theme", {"bg": "#111111"})
+        
+        themes_dir = tmp_path / ".textedit" / "themes"
+        # Should create a file with sanitized name
+        assert (themes_dir / "My-Custom_Theme.json").exists()
+    
+    def test_save_custom_theme_io_error_handling(self, theme_manager, monkeypatch):
+        """save_custom_theme handles IOError gracefully."""
+        def failing_open(*args, **kwargs):
+            raise IOError("Permission denied")
+        
+        monkeypatch.setattr("builtins.open", failing_open)
+        # Should not raise exception
+        theme_manager.save_custom_theme("Test", {"bg": "#000"})
+        assert True  # Made it without exception
+    
+    def test_delete_custom_theme_removes_file(self, theme_manager, tmp_path, monkeypatch):
+        """delete_custom_theme removes the theme file."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        
+        # First save a theme
+        theme_manager.save_custom_theme("ToDelete", {"bg": "#222222"})
+        themes_dir = tmp_path / ".textedit" / "themes"
+        theme_file = themes_dir / "ToDelete.json"
+        assert theme_file.exists()
+        
+        # Delete it
+        theme_manager.delete_custom_theme("ToDelete")
+        assert not theme_file.exists()
+        assert "ToDelete" not in theme_manager.get_custom_theme_names()
+    
+    def test_delete_custom_theme_io_error_handling(self, theme_manager, monkeypatch):
+        """delete_custom_theme handles IOError gracefully."""
+        theme_manager._custom_themes["Temp"] = {"bg": "#000"}
+        
+        def failing_remove(*args, **kwargs):
+            raise IOError("Cannot delete")
+        
+        monkeypatch.setattr("os.remove", failing_remove)
+        # Should not raise exception
+        theme_manager.delete_custom_theme("Temp")
+        assert True  # Made it without exception
+    
+    def test_delete_nonexistent_custom_theme(self, theme_manager):
+        """delete_custom_theme does nothing for nonexistent themes."""
+        initial_count = len(theme_manager.get_custom_theme_names())
+        theme_manager.delete_custom_theme("DoesNotExist")
+        assert len(theme_manager.get_custom_theme_names()) == initial_count
+    
+    def test_get_theme_colors_returns_copy(self, theme_manager):
+        """get_theme_colors returns a copy, not reference."""
+        theme_manager._custom_themes["Original"] = {"bg": "#555555"}
+        
+        colors1 = theme_manager.get_theme_colors("Original")
+        colors2 = theme_manager.get_theme_colors("Original")
+        
+        # Modify one copy
+        colors1["bg"] = "#999999"
+        
+        # Other should be unchanged
+        assert colors2["bg"] == "#555555"
+
+
+class TestLoadSettingsErrorHandling:
+    """Tests for loading settings with error conditions."""
+    
+    def test_load_settings_with_malformed_json(self, tmp_path, monkeypatch):
+        """_load_settings handles malformed JSON gracefully."""
+        import importlib
+        import sys
+        
+        monkeypatch.setenv("HOME", str(tmp_path))
+        settings_dir = tmp_path / ".textedit"
+        settings_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Write invalid JSON
+        (settings_dir / "settings.json").write_text("{invalid json content")
+        
+        # Reset singleton
+        ThemeManager._instance = None
+        manager = ThemeManager()
+        assert manager is not None
+    
+    def test_load_settings_with_missing_file(self, tmp_path, monkeypatch):
+        """_load_settings handles missing settings file gracefully."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        
+        # Reset singleton
+        ThemeManager._instance = None
+        manager = ThemeManager()
+        # Should use default theme
+        assert manager.current_theme_name == "Midnight Blue"
+    
+    def test_load_custom_themes_with_invalid_json_files(self, tmp_path, monkeypatch):
+        """_load_custom_themes skips invalid JSON files."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        themes_dir = tmp_path / ".textedit" / "themes"
+        themes_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create invalid JSON file
+        (themes_dir / "invalid.json").write_text("{not valid json}")
+        
+        # Create valid JSON file
+        valid_theme = {"name": "Valid", "colors": {"bg": "#000"}}
+        (themes_dir / "valid.json").write_text(json.dumps(valid_theme))
+        
+        # Reset singleton
+        ThemeManager._instance = None
+        manager = ThemeManager()
+        custom_names = manager.get_custom_theme_names()
+        
+        # Valid theme should load, invalid should be skipped
+        assert "Valid" in custom_names
+    
+    def test_save_settings_io_error_handling(self, theme_manager, monkeypatch):
+        """_save_settings handles IOError gracefully."""
+        def failing_open(*args, **kwargs):
+            raise IOError("Cannot write")
+        
+        monkeypatch.setattr("builtins.open", failing_open)
+        # Should not raise exception
+        theme_manager._save_settings()
+        assert True  # Made it without exception

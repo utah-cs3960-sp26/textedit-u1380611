@@ -219,3 +219,20 @@ class TestEditorWordWrap:
         editor.set_word_wrap(True)
         editor.set_word_wrap(False)
         assert editor.is_word_wrap_enabled() is False
+
+
+class TestEditorFilePathSetter:
+    """Test the current_file_path property setter."""
+    
+    def test_current_file_path_setter(self, editor):
+        """current_file_path setter updates internal state."""
+        assert editor.current_file_path is None
+        
+        editor.current_file_path = "/path/to/file.txt"
+        assert editor.current_file_path == "/path/to/file.txt"
+        
+        editor.current_file_path = "/another/path.txt"
+        assert editor.current_file_path == "/another/path.txt"
+        
+        editor.current_file_path = None
+        assert editor.current_file_path is None
