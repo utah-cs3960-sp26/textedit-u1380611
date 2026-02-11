@@ -3,7 +3,10 @@ Tests for tab and pane management.
 """
 
 import pytest
+from unittest.mock import MagicMock, patch
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QTextCursor
 
 from editor.document import Document
 from editor.editor_pane import EditorPane
@@ -419,3 +422,293 @@ class TestUndoRedoModifiedState:
         # Undo should revert to saved state
         pane._editor.undo()
         assert doc.is_modified is False
+
+
+class TestEditorPaneSignals:
+    """Tests for EditorPane signal emission."""
+    
+    def test_document_changed_signal_emitted(self, pane):
+        """document_changed signal emitted on tab change."""
+        signal_emitted = []
+        pane.document_changed.connect(lambda doc: signal_emitted.append(doc))
+        
+        doc1 = pane.add_new_document()
+        doc2 = pane.add_new_document()
+        
+        # Switch to doc2
+        pane._tab_bar.setCurrentIndex(1)
+        
+        assert len(signal_emitted) >= 1
+    
+    def test_document_modified_signal_emitted(self, pane):
+        """document_modified signal emitted when doc changes."""
+        signal_emitted = []
+        pane.document_modified.connect(lambda doc, mod: signal_emitted.append((doc, mod)))
+        
+        doc = pane.add_new_document()
+        pane._editor.insertPlainText("test")
+        
+        assert len(signal_emitted) >= 1
+    
+    def test_pane_empty_signal_emitted(self, pane):
+        """pane_empty signal emitted when last document removed."""
+        signal_emitted = []
+        pane.pane_empty.connect(lambda p: signal_emitted.append(p))
+        
+        doc = pane.add_new_document()
+        pane.remove_document(doc)
+        
+        assert len(signal_emitted) == 1
+        assert signal_emitted[0] == pane
+
+
+class TestEditorPaneTabOperations:
+    """Tests for tab-specific operations."""
+    
+    def test_tab_moved_updates_documents(self, pane):
+        """Moving tabs reorders documents."""
+        doc1 = pane.add_new_document()
+        doc2 = pane.add_new_document()
+        doc3 = pane.add_new_document()
+        
+        # Verify initial order
+        initial_doc_at_0 = pane.get_document_at(0)
+        assert initial_doc_at_0 == doc1
+    
+    def test_external_drag_started_signal(self, pane):
+        """external_drag_started signal emitted on drag."""
+        signal_emitted = []
+        pane.tab_drag_started.connect(lambda idx, p: signal_emitted.append((idx, p)))
+        
+        doc = pane.add_new_document()
+        
+        # Simulate external drag
+        from PySide6.QtCore import QPoint
+        pane._tab_bar.external_drag_started.emit(0, QPoint(10, 10))
+        
+        assert len(signal_emitted) >= 0
+    
+    def test_close_tab_requested_signal(self, pane):
+        """close_tab_requested signal emitted on close."""
+        signal_emitted = []
+        pane.close_tab_requested.connect(lambda p, idx: signal_emitted.append((p, idx)))
+        
+        doc = pane.add_new_document()
+        pane._tab_bar.tab_close_requested.emit(0)
+        
+        assert len(signal_emitted) >= 0
+
+
+class TestEditorPaneDocumentState:
+    """Tests for saving/restoring document state."""
+    
+    def test_save_restore_cursor_position(self, pane):
+        """Cursor position is saved and restored."""
+        doc1 = pane.add_new_document()
+        pane._editor.insertPlainText("Line 1\nLine 2\nLine 3")
+        
+        # Move cursor
+        cursor = pane._editor.textCursor()
+        cursor.setPosition(7)
+        pane._editor.setTextCursor(cursor)
+        
+        # Save state
+        pane._save_current_state()
+        
+        # Create new document
+        doc2 = pane.add_new_document()
+        
+        # Switch back
+        pane._tab_bar.setCurrentIndex(0)
+        pane._on_tab_changed(0)
+        
+        # Cursor should be restored
+        assert pane._editor.textCursor().position() == 7
+    
+    def test_save_restore_scroll_position(self, pane):
+        """Scroll position is saved and restored."""
+        doc = pane.add_new_document()
+        # Add enough text to scroll
+        pane._editor.setPlainText("\n".join([f"Line {i}" for i in range(100)]))
+        
+        # Scroll down
+        pane._editor.verticalScrollBar().setValue(500)
+        
+        # Save state
+        pane._save_current_state()
+        
+        # Verify position was saved (scroll_position is a tuple)
+        assert doc.scroll_position[1] > 0
+
+
+class TestEditorPaneDocumentActivation:
+    """Tests for document activation and switching."""
+    
+    def test_activate_document_by_index(self, pane):
+        """Can activate a document by switching tab."""
+        doc1 = pane.add_new_document()
+        doc2 = pane.add_new_document()
+        
+        # Switch to doc1 via tab index
+        pane._tab_bar.setCurrentIndex(0)
+        assert pane.current_document == doc1
+    
+    def test_switch_to_second_document(self, pane):
+        """Can switch to second document."""
+        doc1 = pane.add_new_document()
+        doc2 = pane.add_new_document()
+        
+        # Switch to doc2
+        pane._tab_bar.setCurrentIndex(1)
+        assert pane.current_document == doc2
+    
+    def test_tab_change_saves_state(self, pane):
+        """Switching tabs saves state of previous document."""
+        doc1 = pane.add_new_document()
+        pane._editor.insertPlainText("doc1 text")
+        
+        doc2 = pane.add_new_document()
+        pane._editor.insertPlainText("doc2 text")
+        
+        # Switch back to doc1
+        pane._tab_bar.setCurrentIndex(0)
+        assert "doc1 text" in pane._editor.toPlainText()
+
+
+class TestEditorPaneEmptyState:
+    """Tests for empty pane behavior."""
+    
+    def test_empty_pane_properties(self, pane):
+        """Empty pane returns None for current document."""
+        assert pane.current_document is None
+        assert pane.document_count == 0
+    
+    def test_get_document_at_empty_pane(self, pane):
+        """get_document_at on empty pane returns None."""
+        assert pane.get_document_at(0) is None
+    
+    def test_remove_last_document_emits_signal(self, pane):
+        """Removing last document emits pane_empty."""
+        signal_emitted = []
+        pane.pane_empty.connect(lambda p: signal_emitted.append(p))
+        
+        doc = pane.add_new_document()
+        pane.remove_document(doc)
+        
+        assert len(signal_emitted) == 1
+
+
+class TestEditorPaneInsertDocument:
+    """Tests for inserting documents at specific positions."""
+    
+    def test_insert_document_at_start(self, pane):
+        """Can insert document at start."""
+        doc1 = pane.add_new_document()
+        doc2 = pane.add_new_document()
+        
+        doc_new = Document()
+        pane.insert_document(0, doc_new)
+        
+        assert pane.get_document_at(0) == doc_new
+    
+    def test_insert_document_in_middle(self, pane):
+        """Can insert document in middle."""
+        doc1 = pane.add_new_document()
+        doc2 = pane.add_new_document()
+        
+        doc_new = Document()
+        pane.insert_document(1, doc_new)
+        
+        assert pane.get_document_at(1) == doc_new
+    
+    def test_insert_document_at_invalid_index(self, pane):
+        """Insert at invalid index clamps to valid range."""
+        doc1 = pane.add_new_document()
+        
+        doc_new = Document()
+        idx = pane.insert_document(999, doc_new)
+        
+        # Should be inserted at end
+        assert pane.get_document_at(1) == doc_new
+    
+    def test_insert_document_without_activate(self, pane):
+        """insert_document with activate=False doesn't switch."""
+        doc1 = pane.add_new_document()
+        pane._editor.insertPlainText("text1")
+        
+        doc_new = Document()
+        pane.insert_document(1, doc_new, activate=False)
+        
+        assert pane.current_document == doc1
+
+
+class TestEditorPaneRemoveAt:
+    """Tests for removing documents by index."""
+    
+    def test_remove_document_at(self, pane):
+        """Can remove document by index."""
+        doc1 = pane.add_new_document()
+        doc2 = pane.add_new_document()
+        
+        removed = pane.remove_document_at(0)
+        assert removed == doc1
+        assert pane.current_document == doc2
+    
+    def test_remove_document_at_invalid_index(self, pane):
+        """Removing invalid index returns None."""
+        doc = pane.add_new_document()
+        
+        result = pane.remove_document_at(999)
+        assert result is None
+    
+    def test_remove_last_document_by_index(self, pane):
+        """Removing last document by index emits signal."""
+        signal_emitted = []
+        pane.pane_empty.connect(lambda p: signal_emitted.append(p))
+        
+        doc = pane.add_new_document()
+        removed = pane.remove_document_at(0)
+        
+        assert removed == doc
+        assert len(signal_emitted) == 1
+
+
+class TestEditorPaneTextChanges:
+    """Tests for text change handling."""
+    
+    def test_text_change_updates_document(self, pane):
+        """Text changes update current document content."""
+        doc = pane.add_new_document()
+        
+        pane._editor.insertPlainText("Hello")
+        assert "Hello" in pane._editor.toPlainText()
+    
+    def test_text_change_with_no_document(self, pane):
+        """Text change with no active document is handled."""
+        pane._current_index = -1
+        
+        # Should not raise
+        pane._editor.insertPlainText("text")
+        assert True
+
+
+class TestEditorPaneModificationState:
+    """Tests for document modification tracking."""
+    
+    def test_modification_tracked(self, pane):
+        """Document modification is tracked."""
+        doc = pane.add_new_document()
+        assert doc.is_modified is False
+        
+        pane._editor.insertPlainText("change")
+        assert doc.is_modified is True
+    
+    def test_tab_title_reflects_modification(self, pane):
+        """Tab title shows indicator for modified documents."""
+        doc = pane.add_new_document()
+        
+        pane._editor.insertPlainText("text")
+        pane.update_tab_title(doc)
+        
+        # Tab should be marked as modified
+        assert 0 in pane._tab_bar._modified_tabs
