@@ -346,8 +346,6 @@ class FindReplaceDialog(QDialog):
                 cursor.insertText(self.replacement)
                 self._search()
                 self._update_highlights()
-                if self._matches and self._current_match_index >= len(self._matches):
-                    self._current_match_index = 0
                 if self._matches:
                     self._goto_current_match()
                 return
