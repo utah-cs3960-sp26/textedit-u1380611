@@ -8,7 +8,7 @@ from PySide6.QtGui import QColor, QPainter, QFont
 from PySide6.QtCore import Qt, QRect, QSize
 from unittest.mock import MagicMock, patch
 
-from editor.line_number_editor import LineNumberedEditor, LineNumberArea
+from editor.line_number_editor import LineNumberedEditor, LineNumberArea, JumpScrollBar
 
 
 @pytest.fixture(scope="session")
@@ -326,3 +326,45 @@ class TestLineNumberAreaScrolling:
         assert area_width > 0
         
         editor.close()
+
+
+class TestJumpScrollBar:
+    """Tests for the JumpScrollBar click-to-jump behavior."""
+
+    def test_editor_uses_jump_scrollbar(self, editor):
+        """Editor's vertical scrollbar is a JumpScrollBar."""
+        assert isinstance(editor.verticalScrollBar(), JumpScrollBar)
+
+    def test_jump_scrollbar_click_sets_value(self, qapp):
+        """Clicking on the scrollbar track jumps to the proportional position."""
+        ed = LineNumberedEditor()
+        ed.setPlainText("\n".join(f"line {i}" for i in range(500)))
+        ed.resize(400, 200)
+        ed.show()
+        qapp.processEvents()
+
+        sb = ed.verticalScrollBar()
+        assert sb.maximum() > 0
+
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtCore import QEvent
+
+        # Click near the bottom of the scrollbar
+        click_y = sb.height() * 0.9
+        event = QMouseEvent(
+            QEvent.Type.MouseButtonPress,
+            QPointF(sb.width() / 2, click_y),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        sb.mousePressEvent(event)
+        qapp.processEvents()
+
+        # Value should have jumped close to the maximum
+        assert sb.value() > sb.maximum() * 0.5
+
+        ed.close()
+        ed.deleteLater()
+        qapp.processEvents()

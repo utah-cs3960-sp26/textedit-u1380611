@@ -4,9 +4,9 @@ Line Number Editor Module
 A QPlainTextEdit with a line number gutter, similar to VS Code.
 """
 
-from PySide6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit
+from PySide6.QtWidgets import QPlainTextEdit, QWidget, QTextEdit, QScrollBar, QStyleOptionSlider, QStyle
 from PySide6.QtCore import Qt, QRect, QSize
-from PySide6.QtGui import QPainter, QColor, QTextFormat, QTextCursor
+from PySide6.QtGui import QPainter, QColor, QTextFormat, QTextCursor, QMouseEvent
 
 
 class LineNumberArea(QWidget):
@@ -23,11 +23,39 @@ class LineNumberArea(QWidget):
         self._editor.line_number_area_paint_event(event)
 
 
+class JumpScrollBar(QScrollBar):
+    """Scrollbar that jumps to the clicked position instead of paging."""
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            opt = QStyleOptionSlider()
+            self.initStyleOption(opt)
+            groove = self.style().subControlRect(
+                QStyle.ComplexControl.CC_ScrollBar, opt,
+                QStyle.SubControl.SC_ScrollBarGroove, self,
+            )
+            if groove.isValid():
+                if self.orientation() == Qt.Orientation.Vertical:
+                    pos = event.position().y()
+                    total = groove.height()
+                else:
+                    pos = event.position().x()
+                    total = groove.width()
+                ratio = (pos - groove.top()) / total if self.orientation() == Qt.Orientation.Vertical else (pos - groove.left()) / total
+                value = int(self.minimum() + ratio * (self.maximum() - self.minimum()))
+                self.setValue(value)
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+
 class LineNumberedEditor(QPlainTextEdit):
     """QPlainTextEdit with line numbers displayed in a left margin."""
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        
+        self.setVerticalScrollBar(JumpScrollBar(Qt.Orientation.Vertical, self))
         
         self._line_number_area = LineNumberArea(self)
         
