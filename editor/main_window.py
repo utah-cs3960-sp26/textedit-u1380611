@@ -20,6 +20,7 @@ from editor.file_tree import FileTree, CollapsibleSidebar
 from editor.settings_dialog import SettingsDialog, FontManagerDialog
 from editor.font_toolbar import FontMiniToolbar
 from editor.find_replace import FindReplaceDialog, MultiFileFindDialog
+from editor.frame_timer import FrameTimer
 
 
 class MainWindow(QMainWindow):
@@ -67,6 +68,8 @@ class MainWindow(QMainWindow):
         self._main_splitter.setSizes([200, 600])
         
         self.setCentralWidget(self._main_splitter)
+        
+        self._frame_timer = FrameTimer(self)
         
         self._file_tree.file_open_requested.connect(self._on_file_tree_open)
         self._file_tree.file_open_new_tab_requested.connect(self._on_file_tree_open_new_tab)
@@ -218,6 +221,13 @@ class MainWindow(QMainWindow):
         self._swap_panes_action.triggered.connect(self._on_swap_panes)
         self._swap_panes_action.setEnabled(False)
         view_menu.addAction(self._swap_panes_action)
+        
+        view_menu.addSeparator()
+        
+        self._frame_timer_action = QAction("Frame &Timer", self)
+        self._frame_timer_action.setShortcut(QKeySequence("Ctrl+P"))
+        self._frame_timer_action.triggered.connect(self._on_toggle_frame_timer)
+        view_menu.addAction(self._frame_timer_action)
     
     def _setup_settings_menu(self, menubar: QMenuBar):
         """Create the Settings menu."""
@@ -724,6 +734,12 @@ class MainWindow(QMainWindow):
         """Handle View > Sidebar toggle."""
         self._sidebar.setVisible(checked)
     
+    def _on_toggle_frame_timer(self):
+        """Handle View > Frame Timer (Ctrl+P)."""
+        self._frame_timer.toggle()
+        if self._frame_timer.isVisible():
+            self._position_frame_timer()
+    
     def _on_open_folder(self):
         """Handle File > Open Folder action."""
         import os
@@ -869,6 +885,20 @@ class MainWindow(QMainWindow):
         """Show an error dialog."""
         QMessageBox.critical(self, title, message)
     
+    def _position_frame_timer(self):
+        """Position the frame timer at the top-right of the central widget."""
+        cw = self.centralWidget()
+        if cw:
+            fw = self._frame_timer.sizeHint().width()
+            self._frame_timer.move(cw.width() - fw - 8, 4)
+            self._frame_timer.raise_()
+
+    def resizeEvent(self, event):
+        """Reposition overlay widgets on resize."""
+        super().resizeEvent(event)
+        if self._frame_timer.isVisible():
+            self._position_frame_timer()
+
     def closeEvent(self, event):
         """Handle window close event."""
         if self._prompt_save_all():
