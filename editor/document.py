@@ -48,6 +48,7 @@ class Document:
         self._undo_stack: list[UndoEntry] = []
         self._redo_stack: list[UndoEntry] = []
         self._scroll_position: tuple[int, int] = (0, 0)
+        self._has_rich_formatting: bool = False
     
     @property
     def id(self) -> str:
@@ -126,6 +127,15 @@ class Document:
     def scroll_position(self, pos: tuple[int, int]):
         """Set the scroll position."""
         self._scroll_position = pos
+    
+    @property
+    def has_rich_formatting(self) -> bool:
+        """Whether this document uses rich text formatting."""
+        return self._has_rich_formatting
+
+    @has_rich_formatting.setter
+    def has_rich_formatting(self, value: bool):
+        self._has_rich_formatting = value
     
     def mark_saved(self, file_path: Optional[str] = None):
         """Mark document as saved, optionally updating file path."""

@@ -8,6 +8,8 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from editor.editor_widget import EditorWidget
+from editor.document import Document
+from editor.editor_pane import EditorPane
 
 
 @pytest.fixture(scope="session")
@@ -23,6 +25,14 @@ def qapp():
 def editor(qapp):
     """Create a fresh EditorWidget for each test."""
     widget = EditorWidget()
+    yield widget
+    widget.deleteLater()
+
+
+@pytest.fixture
+def pane(qapp):
+    """Create a fresh EditorPane for each test."""
+    widget = EditorPane()
     yield widget
     widget.deleteLater()
 
@@ -236,3 +246,100 @@ class TestEditorFilePathSetter:
         
         editor.current_file_path = None
         assert editor.current_file_path is None
+
+
+class TestMemoryOptimization:
+    """Tests for memory optimization — skipping HTML for plain text."""
+    
+    def test_plain_text_no_html_stored(self, pane):
+        """Plain text document should not store html_content."""
+        doc = Document(content="Hello world\nLine 2\nLine 3")
+        pane.add_document(doc)
+        pane._save_current_state()
+        assert doc.html_content is None
+    
+    def test_rich_text_stores_html(self, pane):
+        """Document with has_rich_formatting=True should store HTML."""
+        doc = Document(content="Hello world")
+        doc.has_rich_formatting = True
+        pane.add_document(doc)
+        pane._save_current_state()
+        assert doc.html_content is not None
+    
+    def test_html_document_preserves_html(self, pane):
+        """Document opened as HTML should continue storing HTML."""
+        doc = Document(content="", file_path="test.html")
+        doc.html_content = "<html><body>Hello</body></html>"
+        pane.add_document(doc)
+        pane._save_current_state()
+        assert doc.html_content is not None
+    
+    def test_has_rich_formatting_default_false(self):
+        """New document should have has_rich_formatting=False."""
+        doc = Document()
+        assert doc.has_rich_formatting is False
+    
+    def test_has_rich_formatting_settable(self):
+        """has_rich_formatting property should be settable."""
+        doc = Document()
+        doc.has_rich_formatting = True
+        assert doc.has_rich_formatting is True
+
+
+class TestContentDirtyTracking:
+    """Tests for content dirty flag optimization."""
+    
+    def test_content_not_copied_when_unchanged(self, pane):
+        """toPlainText() should be skipped when content hasn't changed."""
+        doc = Document(content="original content")
+        pane.add_document(doc)
+        # Manually set content to a sentinel to verify it's NOT overwritten
+        doc.content = "sentinel"
+        pane._save_current_state()
+        # Since no text was changed, content should remain as sentinel
+        assert doc.content == "sentinel"
+    
+    def test_content_copied_after_text_change(self, pane):
+        """toPlainText() should run after user edits text."""
+        doc = Document(content="original")
+        pane.add_document(doc)
+        pane._editor.setPlainText("modified text")
+        # textChanged fires → _content_dirty = True
+        pane._save_current_state()
+        assert doc.content == "modified text"
+    
+    def test_dirty_flag_reset_on_restore(self, pane):
+        """Dirty flag should be False after restoring a document."""
+        doc = Document(content="test")
+        pane.add_document(doc)
+        assert pane._content_dirty is False
+
+
+class TestLargeDocWordWrap:
+    """Tests for auto word-wrap disable on large documents."""
+    
+    def test_large_doc_disables_word_wrap(self, pane):
+        """Documents over threshold should force NoWrap."""
+        from editor.line_number_editor import LineNumberedEditor
+        large_content = "x" * (EditorPane._LARGE_DOC_THRESHOLD + 1)
+        doc = Document(content=large_content)
+        pane.add_document(doc)
+        assert pane._editor.lineWrapMode() == LineNumberedEditor.LineWrapMode.NoWrap
+    
+    def test_small_doc_respects_wrap_preference(self, pane):
+        """Small documents should use the user's word wrap preference."""
+        from editor.line_number_editor import LineNumberedEditor
+        pane._word_wrap_preference = True
+        doc = Document(content="small text")
+        pane.add_document(doc)
+        assert pane._editor.lineWrapMode() == LineNumberedEditor.LineWrapMode.WidgetWidth
+    
+    def test_set_word_wrap_blocked_for_large_doc(self, pane):
+        """set_word_wrap(True) should be ignored for large documents."""
+        from editor.line_number_editor import LineNumberedEditor
+        large_content = "x" * (EditorPane._LARGE_DOC_THRESHOLD + 1)
+        doc = Document(content=large_content)
+        pane.add_document(doc)
+        pane.set_word_wrap(True)
+        assert pane._editor.lineWrapMode() == LineNumberedEditor.LineWrapMode.NoWrap
+        assert pane._word_wrap_preference is True

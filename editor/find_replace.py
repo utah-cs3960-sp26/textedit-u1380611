@@ -4,6 +4,8 @@ Find and Replace Module
 Provides find/replace functionality for single documents and across open tabs.
 """
 
+import bisect
+import re
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 from PySide6.QtWidgets import (
@@ -11,7 +13,7 @@ from PySide6.QtWidgets import (
     QLabel, QWidget, QCheckBox, QGroupBox, QTreeWidget, QTreeWidgetItem,
     QSplitter, QPlainTextEdit, QMessageBox, QTextEdit
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import (
     QTextCursor, QTextCharFormat, QColor, QBrush, QTextDocument
 )
@@ -63,37 +65,74 @@ class FindReplaceEngine:
             return []
         
         matches = []
-        search_content = content if case_sensitive else content.lower()
-        search_query = query if case_sensitive else query.lower()
         
-        lines = content.split('\n')
+        # Build line_starts by scanning for newlines instead of content.split('\n')
+        # which would create millions of string objects for large files
         line_starts = [0]
-        for line in lines[:-1]:
-            line_starts.append(line_starts[-1] + len(line) + 1)
-        
-        pos = 0
+        idx = 0
         while True:
-            idx = search_content.find(search_query, pos)
+            idx = content.find('\n', idx)
             if idx == -1:
                 break
-            
-            line_num = 0
-            for i, start in enumerate(line_starts):
-                if start > idx:
+            line_starts.append(idx + 1)
+            idx += 1
+        
+        content_len = len(content)
+        
+        if case_sensitive:
+            pos = 0
+            qlen = len(query)
+            while True:
+                idx = content.find(query, pos)
+                if idx == -1:
                     break
-                line_num = i
-            
-            line_text = lines[line_num] if line_num < len(lines) else ""
-            
-            matches.append(SearchMatch(
-                start=idx,
-                end=idx + len(query),
-                line_number=line_num + 1,
-                line_text=line_text
-            ))
-            pos = idx + 1
+                line_num = bisect.bisect_right(line_starts, idx) - 1
+                line_start = line_starts[line_num]
+                line_end = line_starts[line_num + 1] - 1 if line_num + 1 < len(line_starts) else content_len
+                matches.append(SearchMatch(
+                    start=idx, end=idx + qlen,
+                    line_number=line_num + 1,
+                    line_text=content[line_start:line_end]
+                ))
+                pos = idx + 1
+        else:
+            # Use re.finditer with IGNORECASE to avoid content.lower() copy
+            pattern = re.compile(re.escape(query), re.IGNORECASE)
+            for m in pattern.finditer(content):
+                idx = m.start()
+                line_num = bisect.bisect_right(line_starts, idx) - 1
+                line_start = line_starts[line_num]
+                line_end = line_starts[line_num + 1] - 1 if line_num + 1 < len(line_starts) else content_len
+                matches.append(SearchMatch(
+                    start=m.start(), end=m.end(),
+                    line_number=line_num + 1,
+                    line_text=content[line_start:line_end]
+                ))
         
         return matches
+    
+    @staticmethod
+    def find_positions(content: str, query: str, case_sensitive: bool = False) -> List[Tuple[int, int]]:
+        """Fast search returning only (start, end) position tuples. No line info."""
+        if not query:
+            return []
+        
+        if case_sensitive:
+            positions = []
+            pos = 0
+            qlen = len(query)
+            while True:
+                idx = content.find(query, pos)
+                if idx == -1:
+                    break
+                positions.append((idx, idx + qlen))
+                pos = idx + 1
+            return positions
+        else:
+            # Use re.finditer with IGNORECASE to avoid content.lower() copy
+            # which doubles memory usage for large files
+            pattern = re.compile(re.escape(query), re.IGNORECASE)
+            return [(m.start(), m.end()) for m in pattern.finditer(content)]
     
     @staticmethod
     def replace_all(content: str, query: str, replacement: str, 
@@ -113,19 +152,18 @@ class FindReplaceEngine:
         if not query:
             return content, 0
         
-        matches = FindReplaceEngine.find_all(content, query, case_sensitive)
-        if not matches:
+        if case_sensitive:
+            count = content.count(query)
+            if count == 0:
+                return content, 0
+            return content.replace(query, replacement), count
+        
+        # Use re.subn for case-insensitive to avoid content.lower() copy
+        pattern = re.compile(re.escape(query), re.IGNORECASE)
+        new_content, count = pattern.subn(lambda m: replacement, content)
+        if count == 0:
             return content, 0
-        
-        result = []
-        last_end = 0
-        for match in matches:
-            result.append(content[last_end:match.start])
-            result.append(replacement)
-            last_end = match.end
-        result.append(content[last_end:])
-        
-        return ''.join(result), len(matches)
+        return new_content, count
 
 
 class FindReplaceDialog(QDialog):
@@ -133,10 +171,13 @@ class FindReplaceDialog(QDialog):
     Dialog for find and replace in the current document.
     """
     
+    _SEARCH_DEBOUNCE_MS = 300
+
     def __init__(self, editor: QPlainTextEdit, parent=None):
         super().__init__(parent)
         self._editor = editor
-        self._matches: List[SearchMatch] = []
+        self._matches: List[Tuple[int, int]] = []
+        self._match_starts: List[int] = []  # cached for bisect lookups
         self._current_match_index: int = -1
         self._highlight_format = QTextCharFormat()
         self._highlight_format.setBackground(QBrush(QColor(255, 255, 0, 80)))
@@ -144,7 +185,13 @@ class FindReplaceDialog(QDialog):
         self._current_format.setBackground(QBrush(QColor(255, 165, 0, 150)))
         self._extra_selections = []
         
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(self._SEARCH_DEBOUNCE_MS)
+        self._search_timer.timeout.connect(self._do_deferred_search)
+        
         self._setup_ui()
+        self._editor.updateRequest.connect(self._on_viewport_scrolled)
         self.setWindowTitle("Find and Replace")
         self.setMinimumWidth(400)
     
@@ -214,7 +261,8 @@ class FindReplaceDialog(QDialog):
         self._find_edit.setFocus()
         self._find_edit.selectAll()
         self.show()
-        self._on_query_changed()
+        # Run search immediately when dialog opens (no debounce)
+        self._do_deferred_search()
     
     def show_replace(self):
         """Show the dialog in replace mode."""
@@ -224,7 +272,8 @@ class FindReplaceDialog(QDialog):
         self._find_edit.setFocus()
         self._find_edit.selectAll()
         self.show()
-        self._on_query_changed()
+        # Run search immediately when dialog opens (no debounce)
+        self._do_deferred_search()
     
     @property
     def query(self) -> str:
@@ -239,14 +288,35 @@ class FindReplaceDialog(QDialog):
         return self._case_checkbox.isChecked()
     
     def _on_query_changed(self, *args):
-        """Re-run search when query changes."""
+        """Debounce search: restart timer on each keystroke."""
+        if not self.query:
+            self._search_timer.stop()
+            self._matches = []
+            self._match_starts = []
+            self._current_match_index = -1
+            self._status_label.setText("Enter search text")
+            self._clear_highlights()
+            return
+        self._status_label.setText("Searching...")
+        self._search_timer.start()
+    
+    def _do_deferred_search(self):
+        """Run the actual search after the debounce delay."""
+        self._search_timer.stop()
         self._search()
         self._update_highlights()
+    
+    def _ensure_search_complete(self):
+        """If a debounced search is pending, run it immediately."""
+        if self._search_timer.isActive():
+            self._search_timer.stop()
+            self._do_deferred_search()
     
     def _search(self):
         """Perform the search and populate matches."""
         content = self._editor.toPlainText()
-        self._matches = FindReplaceEngine.find_all(content, self.query, self.case_sensitive)
+        self._matches = FindReplaceEngine.find_positions(content, self.query, self.case_sensitive)
+        self._match_starts = [m[0] for m in self._matches]
         
         if not self._matches:
             self._current_match_index = -1
@@ -257,10 +327,9 @@ class FindReplaceDialog(QDialog):
         else:
             cursor_pos = self._editor.textCursor().position()
             self._current_match_index = 0
-            for i, match in enumerate(self._matches):
-                if match.start >= cursor_pos:
-                    self._current_match_index = i
-                    break
+            idx = bisect.bisect_left(self._match_starts, cursor_pos)
+            if idx < len(self._matches):
+                self._current_match_index = idx
             self._update_status()
     
     def _update_status(self):
@@ -270,22 +339,37 @@ class FindReplaceDialog(QDialog):
                 f"Match {self._current_match_index + 1} of {len(self._matches)}"
             )
     
+    _HIGHLIGHT_ALL_THRESHOLD = 1000
+
     def _update_highlights(self):
-        """Update highlighting in the editor."""
+        """Update highlighting — only visible matches for large result sets."""
         self._clear_highlights()
         
         if not self._matches:
             return
         
+        matches_to_highlight = self._matches
+        
+        if len(self._matches) > self._HIGHLIGHT_ALL_THRESHOLD:
+            visible_start, visible_end = self._get_visible_range()
+            if visible_start is not None:
+                lo = bisect.bisect_left(self._match_starts, visible_start)
+                hi = bisect.bisect_right(self._match_starts, visible_end)
+                lo = max(0, lo - 2)
+                hi = min(len(self._matches), hi + 2)
+                matches_to_highlight = self._matches[lo:hi]
+        
         selections = []
-        for i, match in enumerate(self._matches):
+        for start, end in matches_to_highlight:
             cursor = self._editor.textCursor()
-            cursor.setPosition(match.start)
-            cursor.setPosition(match.end, QTextCursor.MoveMode.KeepAnchor)
+            cursor.setPosition(start)
+            cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
             
             selection = QTextEdit.ExtraSelection()
             selection.cursor = cursor
-            if i == self._current_match_index:
+            if (self._current_match_index >= 0 and
+                self._current_match_index < len(self._matches) and
+                self._matches[self._current_match_index] == (start, end)):
                 selection.format = self._current_format
             else:
                 selection.format = self._highlight_format
@@ -294,6 +378,28 @@ class FindReplaceDialog(QDialog):
         self._extra_selections = selections
         self._editor.setExtraSelections(selections)
     
+    def _get_visible_range(self):
+        """Get the character position range visible in the viewport."""
+        first_block = self._editor.firstVisibleBlock()
+        if not first_block.isValid():
+            return None, None
+        visible_start = first_block.position()
+        
+        viewport_height = self._editor.viewport().height()
+        if viewport_height <= 0:
+            return None, None
+        
+        block = first_block
+        visible_end = visible_start
+        while block.isValid():
+            geo = self._editor.blockBoundingGeometry(block).translated(self._editor.contentOffset())
+            if geo.top() > viewport_height:
+                break
+            visible_end = block.position() + block.length()
+            block = block.next()
+        
+        return visible_start, visible_end
+    
     def _clear_highlights(self):
         """Clear all search highlights."""
         self._editor.setExtraSelections([])
@@ -301,6 +407,7 @@ class FindReplaceDialog(QDialog):
     
     def _find_next(self):
         """Navigate to the next match."""
+        self._ensure_search_complete()
         if not self._matches:
             return
         
@@ -311,6 +418,7 @@ class FindReplaceDialog(QDialog):
     
     def _find_prev(self):
         """Navigate to the previous match."""
+        self._ensure_search_complete()
         if not self._matches:
             return
         
@@ -324,25 +432,26 @@ class FindReplaceDialog(QDialog):
         if self._current_match_index < 0 or self._current_match_index >= len(self._matches):
             return
         
-        match = self._matches[self._current_match_index]
+        start, end = self._matches[self._current_match_index]
         cursor = self._editor.textCursor()
-        cursor.setPosition(match.start)
-        cursor.setPosition(match.end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
         self._editor.setTextCursor(cursor)
         self._editor.centerCursor()
     
     def _replace_current(self):
         """Replace the current match."""
+        self._ensure_search_complete()
         if not self._matches or self._current_match_index < 0:
             return
         
-        match = self._matches[self._current_match_index]
+        start, end = self._matches[self._current_match_index]
         cursor = self._editor.textCursor()
         
         if cursor.hasSelection():
             sel_start = cursor.selectionStart()
             sel_end = cursor.selectionEnd()
-            if sel_start == match.start and sel_end == match.end:
+            if sel_start == start and sel_end == end:
                 cursor.insertText(self.replacement)
                 self._search()
                 self._update_highlights()
@@ -354,23 +463,38 @@ class FindReplaceDialog(QDialog):
     
     def _replace_all(self):
         """Replace all matches."""
+        self._ensure_search_complete()
         if not self._matches:
             return
         
-        cursor = self._editor.textCursor()
-        cursor.beginEditBlock()
-        
-        for match in reversed(self._matches):
-            cursor.setPosition(match.start)
-            cursor.setPosition(match.end, QTextCursor.MoveMode.KeepAnchor)
-            cursor.insertText(self.replacement)
-        
-        cursor.endEditBlock()
-        
         count = len(self._matches)
-        self._search()
-        self._update_highlights()
-        self._status_label.setText(f"Replaced {count} occurrence(s)")
+        
+        if count > 1000:
+            content = self._editor.toPlainText()
+            new_content, replaced = FindReplaceEngine.replace_all(
+                content, self.query, self.replacement, self.case_sensitive
+            )
+            if replaced > 0:
+                self._editor.setPlainText(new_content)
+            self._search()
+            self._update_highlights()
+            self._status_label.setText(f"Replaced {replaced} occurrence(s)")
+        else:
+            cursor = self._editor.textCursor()
+            cursor.beginEditBlock()
+            for start, end in reversed(self._matches):
+                cursor.setPosition(start)
+                cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+                cursor.insertText(self.replacement)
+            cursor.endEditBlock()
+            self._search()
+            self._update_highlights()
+            self._status_label.setText(f"Replaced {count} occurrence(s)")
+    
+    def _on_viewport_scrolled(self, rect, dy):
+        """Refresh visible highlights when viewport scrolls."""
+        if dy != 0 and self._matches and len(self._matches) > self._HIGHLIGHT_ALL_THRESHOLD:
+            self._update_highlights()
     
     def closeEvent(self, event):
         """Clear highlights when closing."""

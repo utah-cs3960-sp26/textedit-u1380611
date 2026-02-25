@@ -224,7 +224,7 @@ class TestFindReplaceDialogBasic:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("test")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         assert len(dialog._matches) == 3
         
@@ -242,7 +242,7 @@ class TestFindReplaceDialogBasic:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("test")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         dialog._current_match_index = 2
         dialog._find_prev()
@@ -257,7 +257,7 @@ class TestFindReplaceDialogBasic:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         assert len(dialog._matches) == 0
         
@@ -273,7 +273,7 @@ class TestFindReplaceDialogBasic:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("xyz")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         assert len(dialog._matches) == 0
         assert "No matches" in dialog._status_label.text()
@@ -292,7 +292,7 @@ class TestFindReplaceDialogReplace:
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("cat")
         dialog._replace_edit.setText("dog")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         dialog._goto_current_match()
         dialog._replace_current()
@@ -311,7 +311,7 @@ class TestFindReplaceDialogReplace:
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("cat")
         dialog._replace_edit.setText("dog")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         dialog._replace_all()
         
@@ -335,7 +335,7 @@ class TestFindReplaceDialogReplace:
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("cat")
         dialog._replace_edit.setText("dog")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         dialog._replace_all()
         
         content_after_replace = pane._editor.toPlainText()
@@ -359,7 +359,7 @@ class TestFindReplaceDialogUTF8:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("café")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         assert len(dialog._matches) == 2
         
@@ -372,7 +372,7 @@ class TestFindReplaceDialogUTF8:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("你好")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         assert len(dialog._matches) == 2
         
@@ -478,7 +478,7 @@ class TestFindReplaceDialogEdgeCases:
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("cat")
         dialog._replace_edit.setText("dog")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         # We have 2 matches of "cat". Set index to point past the last match after replacement
         assert dialog._current_match_index == 0
@@ -486,8 +486,9 @@ class TestFindReplaceDialogEdgeCases:
         
         # Manually set cursor to position of first "cat"
         cursor = pane._editor.textCursor()
-        cursor.setPosition(dialog._matches[0].start)
-        cursor.setPosition(dialog._matches[0].end, QTextCursor.MoveMode.KeepAnchor)
+        start, end = dialog._matches[0]
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
         pane._editor.setTextCursor(cursor)
         
         # Manually set match index to be >= matches after we replace
@@ -798,7 +799,7 @@ class TestFindReplaceDialogAdvanced:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("test")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         dialog._current_match_index = 1
         dialog._goto_current_match()
@@ -817,7 +818,7 @@ class TestFindReplaceDialogAdvanced:
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("cat")
         dialog._replace_edit.setText("dog")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         dialog._goto_current_match()
         dialog._replace_current()
@@ -835,7 +836,7 @@ class TestFindReplaceDialogAdvanced:
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("cat")
         dialog._replace_edit.setText("dog")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         dialog._current_match_index = 1
         dialog._goto_current_match()
@@ -853,7 +854,7 @@ class TestFindReplaceDialogAdvanced:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("test")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         dialog._current_match_index = 1
         dialog._find_prev()
@@ -868,7 +869,7 @@ class TestFindReplaceDialogAdvanced:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("test")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         dialog._current_match_index = 0
         dialog._find_prev()
@@ -883,7 +884,7 @@ class TestFindReplaceDialogAdvanced:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("test")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         dialog._current_match_index = 999
         dialog._goto_current_match()
@@ -897,7 +898,7 @@ class TestFindReplaceDialogAdvanced:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("test")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         assert len(dialog._extra_selections) > 0
         
@@ -912,7 +913,7 @@ class TestFindReplaceDialogAdvanced:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("test")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         assert len(dialog._extra_selections) > 0
         
@@ -1154,7 +1155,7 @@ class TestMultiFileFindAdvanced:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         assert "Enter search text" in dialog._status_label.text()
         
@@ -1168,7 +1169,7 @@ class TestMultiFileFindAdvanced:
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("cat")
         dialog._replace_edit.setText("dog")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         cursor = pane._editor.textCursor()
         cursor.setPosition(0)
@@ -1237,7 +1238,7 @@ class TestUncoveredEdgeCases:
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("xyz")
         dialog._replace_edit.setText("abc")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         assert len(dialog._matches) == 0
         
@@ -1256,7 +1257,7 @@ class TestUncoveredEdgeCases:
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("test")
         dialog._replace_edit.setText("abc")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         dialog._current_match_index = -1
         
@@ -1275,7 +1276,7 @@ class TestUncoveredEdgeCases:
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("xyz")
         dialog._replace_edit.setText("abc")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         assert len(dialog._matches) == 0
         
@@ -1294,7 +1295,7 @@ class TestUncoveredEdgeCases:
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("cat")
         dialog._replace_edit.setText("dog")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         assert len(dialog._matches) == 3
         
@@ -1319,7 +1320,7 @@ class TestUncoveredEdgeCases:
         
         dialog = FindReplaceDialog(pane._editor)
         dialog._find_edit.setText("test")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         # Set up highlights
         assert len(dialog._extra_selections) > 0
@@ -1341,3 +1342,250 @@ class TestUncoveredEdgeCases:
     # 3. The index can only become out of bounds if _search() doesn't update it correctly
     # This is defensive code that protects against internal inconsistency that shouldn't occur
     # in normal operation. It's good defensive programming but can't be practically tested.
+
+
+class TestFindPositions:
+    """Tests for FindReplaceEngine.find_positions."""
+
+    def test_find_positions_basic(self):
+        """Basic match returns correct position tuples."""
+        content = "hello world hello"
+        positions = FindReplaceEngine.find_positions(content, "hello")
+        assert positions == [(0, 5), (12, 17)]
+
+    def test_find_positions_case_insensitive(self):
+        """Default case insensitive search finds all variants."""
+        content = "Hello HELLO hello"
+        positions = FindReplaceEngine.find_positions(content, "hello")
+        assert len(positions) == 3
+        assert positions[0] == (0, 5)
+        assert positions[1] == (6, 11)
+        assert positions[2] == (12, 17)
+
+    def test_find_positions_empty_query(self):
+        """Empty query returns empty list."""
+        positions = FindReplaceEngine.find_positions("some content", "")
+        assert positions == []
+
+    def test_find_positions_no_matches(self):
+        """No matches returns empty list."""
+        positions = FindReplaceEngine.find_positions("hello world", "xyz")
+        assert positions == []
+
+
+class TestViewportHighlighting:
+    """Tests for viewport-only highlighting optimization."""
+
+    def test_highlights_capped_for_large_result_sets(self, pane):
+        """For large match counts, only a subset of highlights are created."""
+        doc = pane.add_new_document()
+        # Create multiline content so viewport can't show everything
+        content = "\n".join(["ab"] * 1500)  # 1500 matches of "ab", one per line
+        pane._editor.setPlainText(content)
+        # Give the editor a small fixed size so only a few lines are visible
+        pane._editor.setFixedHeight(100)
+        pane._editor.show()
+
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("ab")
+        dialog._do_deferred_search()
+
+        assert len(dialog._matches) == 1500
+        # Extra selections should be fewer than total matches
+        assert len(dialog._extra_selections) < 1500
+
+        pane._editor.hide()
+        dialog.deleteLater()
+
+    def test_all_highlighted_for_small_result_sets(self, pane):
+        """For small match counts, all matches are highlighted."""
+        doc = pane.add_new_document()
+        content = "ab " * 10  # 10 matches
+        pane._editor.setPlainText(content)
+
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("ab")
+        dialog._do_deferred_search()
+
+        assert len(dialog._matches) == 10
+        assert len(dialog._extra_selections) == 10
+
+        dialog.deleteLater()
+
+
+class TestOptimizedReplaceAll:
+    """Tests for optimized replace all behavior."""
+
+    def test_replace_all_large_uses_string_replacement(self, pane):
+        """Replace all with many matches uses string replacement and works correctly."""
+        doc = pane.add_new_document()
+        content = "cat " * 1500  # 1500 matches, above threshold
+        pane._editor.setPlainText(content)
+
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("cat")
+        dialog._replace_edit.setText("dog")
+        dialog._do_deferred_search()
+
+        assert len(dialog._matches) == 1500
+
+        dialog._replace_all()
+
+        result = pane._editor.toPlainText()
+        assert "cat" not in result
+        assert result.count("dog") == 1500
+
+        dialog.deleteLater()
+
+    def test_replace_all_small_preserves_cursor_based(self, pane):
+        """Replace all with few matches uses cursor-based replacement (preserves undo)."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("cat cat cat")
+        pane._editor.document().setModified(False)
+        pane._editor.document().clearUndoRedoStacks()
+
+        # Make an edit so undo stack is non-empty
+        cursor = pane._editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(" extra")
+
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("cat")
+        dialog._replace_edit.setText("dog")
+        dialog._do_deferred_search()
+
+        assert len(dialog._matches) == 3
+
+        dialog._replace_all()
+
+        result = pane._editor.toPlainText()
+        assert result == "dog dog dog extra"
+
+        # Undo should restore previous state (cursor-based preserves undo)
+        pane._editor.undo()
+        assert pane._editor.toPlainText() == "cat cat cat extra"
+
+        dialog.deleteLater()
+
+
+class TestRegexBasedSearch:
+    """Tests for regex-based case-insensitive search (avoids content.lower() copy)."""
+    
+    def test_find_positions_case_insensitive_regex(self):
+        """Case-insensitive find_positions uses regex internally."""
+        content = "Hello HELLO hello"
+        positions = FindReplaceEngine.find_positions(content, "hello")
+        assert len(positions) == 3
+        assert positions[0] == (0, 5)
+        assert positions[1] == (6, 11)
+        assert positions[2] == (12, 17)
+    
+    def test_find_positions_special_regex_chars(self):
+        """Query with regex special chars should be escaped properly."""
+        content = "price is $10.00 and $10.00"
+        positions = FindReplaceEngine.find_positions(content, "$10.00")
+        assert len(positions) == 2
+    
+    def test_find_all_case_insensitive_no_split(self):
+        """Case-insensitive find_all should work without content.split()."""
+        content = "Line one TEST\nline two test\nline three"
+        matches = FindReplaceEngine.find_all(content, "test")
+        assert len(matches) == 2
+        assert matches[0].line_number == 1
+        assert matches[0].line_text == "Line one TEST"
+        assert matches[1].line_number == 2
+        assert matches[1].line_text == "line two test"
+    
+    def test_replace_all_case_insensitive_regex(self):
+        """Case-insensitive replace_all uses regex internally."""
+        content = "Hello HELLO hello"
+        new_content, count = FindReplaceEngine.replace_all(content, "hello", "hi")
+        assert count == 3
+        assert new_content == "hi hi hi"
+    
+    def test_replace_all_special_chars_in_replacement(self):
+        """Replacement with backslashes should be treated literally."""
+        content = "foo FOO"
+        new_content, count = FindReplaceEngine.replace_all(content, "foo", "bar\\1")
+        assert count == 2
+        assert new_content == "bar\\1 bar\\1"
+
+
+class TestSearchDebounce:
+    """Tests for debounced search."""
+    
+    def test_query_change_does_not_search_immediately(self, pane):
+        """Typing should not trigger immediate search."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test test test")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("test")
+        # After setText, timer is running but search hasn't happened
+        assert dialog._search_timer.isActive()
+        assert len(dialog._matches) == 0
+        
+        dialog.deleteLater()
+    
+    def test_ensure_search_complete_forces_search(self, pane):
+        """_ensure_search_complete runs pending debounced search."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test test test")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("test")
+        assert len(dialog._matches) == 0
+        
+        dialog._ensure_search_complete()
+        assert len(dialog._matches) == 3
+        assert not dialog._search_timer.isActive()
+        
+        dialog.deleteLater()
+    
+    def test_find_next_forces_search(self, pane):
+        """Find Next should force any pending search to complete first."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test test test")
+        
+        dialog = FindReplaceDialog(pane._editor)
+        dialog._find_edit.setText("test")
+        # No explicit search — _find_next should force it
+        dialog._find_next()
+        assert len(dialog._matches) == 3
+        
+        dialog.deleteLater()
+
+
+class TestOnViewportScrolled:
+    """Tests for viewport scroll handler."""
+
+    def test_scroll_handler_exists(self, pane):
+        """Scroll handler is connected and callable."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("test content")
+
+        dialog = FindReplaceDialog(pane._editor)
+        # Should not crash
+        from PySide6.QtCore import QRect
+        dialog._on_viewport_scrolled(QRect(), 0)
+        dialog._on_viewport_scrolled(QRect(), 10)
+
+        dialog.deleteLater()
+
+
+class TestGetVisibleRange:
+    """Tests for _get_visible_range helper."""
+
+    def test_get_visible_range_returns_tuple(self, pane):
+        """_get_visible_range returns a start/end tuple."""
+        doc = pane.add_new_document()
+        pane._editor.setPlainText("line1\nline2\nline3")
+
+        dialog = FindReplaceDialog(pane._editor)
+        start, end = dialog._get_visible_range()
+        # With no viewport shown, might return None or valid range
+        # Just verify it doesn't crash and returns a 2-tuple
+        assert isinstance(start, (int, type(None)))
+        assert isinstance(end, (int, type(None)))
+
+        dialog.deleteLater()

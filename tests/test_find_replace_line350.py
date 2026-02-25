@@ -37,7 +37,7 @@ class TestLine350Coverage:
         dialog = FindReplaceDialog(editor)
         dialog._find_edit.setText("cat")
         dialog._replace_edit.setText("dog")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         # Verify we have 3 matches
         assert len(dialog._matches) == 3
@@ -73,7 +73,7 @@ class TestLine350Coverage:
         dialog = FindReplaceDialog(editor)
         dialog._find_edit.setText("cat")
         dialog._replace_edit.setText("dog")
-        dialog._on_query_changed()
+        dialog._do_deferred_search()
         
         assert len(dialog._matches) == 2
         

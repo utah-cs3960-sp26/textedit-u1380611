@@ -178,6 +178,81 @@ class TestEventFilter:
         dummy.deleteLater()
 
 
+class TestStallDetection:
+    """Test event-loop stall detection for blocking operations."""
+
+    def test_stall_detected_after_input(self, frame_timer, qapp):
+        """A large gap between events after recent input should be recorded."""
+        frame_timer.toggle()
+        dummy = QWidget()
+
+        now = time.perf_counter()
+        initial_count = len(frame_timer._frame_times)
+
+        # Simulate: input at T-1.01, follow-up event at T-1.0, then 1s block
+        # input_age = last_event - last_input = 0.01s (input was right before gap)
+        frame_timer._last_input_time = now - 1.01
+        frame_timer._last_event_time = now - 1.0  # last event 1 second ago
+        frame_timer._last_paint_time = now - 1.0
+
+        # Next event arrives after the 1-second stall
+        paint_event = QPaintEvent(dummy.rect())
+        frame_timer.eventFilter(dummy, paint_event)
+
+        assert len(frame_timer._frame_times) > initial_count
+        # The stall should be ~1000ms
+        assert frame_timer._frame_times[-1] > 500
+
+        dummy.deleteLater()
+
+    def test_no_stall_during_idle(self, frame_timer, qapp):
+        """Gaps without recent input (idle time) should NOT be recorded as stalls."""
+        frame_timer.toggle()
+        dummy = QWidget()
+
+        # Set input time far in the past (user idle for > 1 second)
+        frame_timer._last_input_time = time.perf_counter() - 5.0
+        frame_timer._last_event_time = time.perf_counter() - 1.0
+
+        initial_count = len(frame_timer._frame_times)
+
+        # Event arrives after gap, but no recent input → should not record
+        paint_event = QPaintEvent(dummy.rect())
+        frame_timer.eventFilter(dummy, paint_event)
+
+        assert len(frame_timer._frame_times) == initial_count
+
+        dummy.deleteLater()
+
+    def test_stall_threshold(self, frame_timer, qapp):
+        """Gaps below the stall threshold should not be recorded as stalls."""
+        frame_timer.toggle()
+        dummy = QWidget()
+
+        # Input event
+        key_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier)
+        frame_timer.eventFilter(dummy, key_event)
+
+        # Small gap (< 200ms) — should not trigger stall detection
+        frame_timer._last_event_time = time.perf_counter() - 0.05  # 50ms ago
+        initial_count = len(frame_timer._frame_times)
+
+        timer_event = QEvent(QEvent.Type.Timer)
+        frame_timer.eventFilter(dummy, timer_event)
+
+        # Only the input→paint path or nothing should fire, not stall detection
+        stall_frames = [f for f in frame_timer._frame_times[initial_count:] if f > 200]
+        assert len(stall_frames) == 0
+
+        dummy.deleteLater()
+
+    def test_reset_clears_event_time(self, frame_timer):
+        """Reset should clear _last_event_time."""
+        frame_timer._last_event_time = 12345.0
+        frame_timer._reset()
+        assert frame_timer._last_event_time == 0.0
+
+
 class TestTimingControl:
     """Test start/stop timing."""
 

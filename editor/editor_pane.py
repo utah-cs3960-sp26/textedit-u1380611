@@ -35,6 +35,8 @@ class EditorPane(QWidget):
         self._documents: list[Document] = []
         self._current_index: int = -1
         self._file_handler = FileHandler()
+        self._content_dirty: bool = False
+        self._word_wrap_preference: bool = True
         
         self._setup_ui()
         self._connect_signals()
@@ -193,6 +195,11 @@ class EditorPane(QWidget):
     
     def set_word_wrap(self, enabled: bool):
         """Toggle word wrap on the editor."""
+        self._word_wrap_preference = enabled
+        # Don't enable word wrap for large documents — layout is too expensive
+        doc = self.current_document
+        if enabled and doc and len(doc.content) > self._LARGE_DOC_THRESHOLD:
+            return
         if enabled:
             self._editor.setLineWrapMode(LineNumberedEditor.LineWrapMode.WidgetWidth)
         else:
@@ -208,8 +215,18 @@ class EditorPane(QWidget):
             return
         
         doc = self._documents[self._current_index]
-        doc.content = self._editor.toPlainText()
-        doc.html_content = self._editor.document().toHtml()
+        # Only copy content from editor when text has actually changed,
+        # avoiding a full toPlainText() copy (253MB+ for large files) on every tab switch
+        if self._content_dirty:
+            doc.content = self._editor.toPlainText()
+            self._content_dirty = False
+        # Only generate HTML for documents with rich text formatting.
+        # For plain text, toHtml() can produce output 3-5x larger than the text,
+        # causing severe memory bloat for large files.
+        if doc.has_rich_formatting or doc.html_content is not None:
+            doc.html_content = self._editor.document().toHtml()
+        else:
+            doc.html_content = None
         
         cursor = self._editor.textCursor()
         doc.cursor_position = CursorPosition(
@@ -224,11 +241,24 @@ class EditorPane(QWidget):
             self._editor.verticalScrollBar().value()
         )
     
+    _LARGE_DOC_THRESHOLD = 1_000_000  # 1MB
+    
     def _restore_document_state(self, document: Document):
         """Restore editor state from a document."""
         # Block all signals during restoration to prevent spurious modification state changes
         self._editor.blockSignals(True)
         self._editor.document().blockSignals(True)
+        
+        # Auto-disable word wrap for large documents before loading content.
+        # Word wrap forces Qt to compute line-wrapping layout for every block,
+        # which is extremely expensive for files with millions of lines.
+        content_size = len(document.html_content or document.content)
+        if content_size > self._LARGE_DOC_THRESHOLD:
+            self._editor.setLineWrapMode(LineNumberedEditor.LineWrapMode.NoWrap)
+        elif self._word_wrap_preference:
+            self._editor.setLineWrapMode(LineNumberedEditor.LineWrapMode.WidgetWidth)
+        else:
+            self._editor.setLineWrapMode(LineNumberedEditor.LineWrapMode.NoWrap)
         
         if document.html_content:
             self._editor.document().setHtml(document.html_content)
@@ -260,6 +290,7 @@ class EditorPane(QWidget):
         
         self._editor.document().blockSignals(False)
         self._editor.blockSignals(False)
+        self._content_dirty = False
     
     def _on_tab_changed(self, index: int):
         """Handle tab selection change."""
@@ -278,6 +309,7 @@ class EditorPane(QWidget):
     
     def _on_text_changed(self):
         """Handle text changes in the editor."""
+        self._content_dirty = True
         doc = self.current_document
         if doc is None:
             return
