@@ -49,6 +49,7 @@ class Document:
         self._redo_stack: list[UndoEntry] = []
         self._scroll_position: tuple[int, int] = (0, 0)
         self._has_rich_formatting: bool = False
+        self._search_content: str | None = content if content else None
     
     @property
     def id(self) -> str:
@@ -64,6 +65,7 @@ class Document:
     def content(self, value: str):
         """Set the document content."""
         self._content = value
+        self._search_content = None
     
     @property
     def html_content(self) -> Optional[str]:
@@ -136,12 +138,26 @@ class Document:
     @has_rich_formatting.setter
     def has_rich_formatting(self, value: bool):
         self._has_rich_formatting = value
+
+    @property
+    def search_content(self) -> str | None:
+        """Cached content for searching. None if document was modified."""
+        return self._search_content
+
+    def invalidate_search_content(self):
+        """Clear search cache when document is edited."""
+        self._search_content = None
+
+    def refresh_search_content(self, content: str):
+        """Update search cache after save or reload."""
+        self._search_content = content
     
     def mark_saved(self, file_path: Optional[str] = None):
         """Mark document as saved, optionally updating file path."""
         if file_path is not None:
             self._file_path = file_path
         self._is_modified = False
+        self._search_content = self._content
     
     def clear_undo_history(self):
         """Clear the undo/redo stacks."""

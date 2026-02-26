@@ -650,7 +650,9 @@ class MainWindow(QMainWindow):
             return
         
         if self._find_replace_dialog is None:
-            self._find_replace_dialog = FindReplaceDialog(editor, self)
+            self._find_replace_dialog = FindReplaceDialog(
+                editor, self, content_provider=self._get_search_content
+            )
         else:
             self._find_replace_dialog._editor = editor
         
@@ -663,7 +665,9 @@ class MainWindow(QMainWindow):
             return
         
         if self._find_replace_dialog is None:
-            self._find_replace_dialog = FindReplaceDialog(editor, self)
+            self._find_replace_dialog = FindReplaceDialog(
+                editor, self, content_provider=self._get_search_content
+            )
         else:
             self._find_replace_dialog._editor = editor
         
@@ -697,6 +701,13 @@ class MainWindow(QMainWindow):
         
         self._multi_file_find_dialog.show_replace()
     
+    def _get_search_content(self):
+        """Return cached content for searching if document is unmodified."""
+        doc = self._split_container.active_document
+        if doc and doc.search_content is not None:
+            return doc.search_content
+        return None
+
     def _get_all_documents(self):
         """Get all open documents from all panes."""
         return self._split_container.all_documents

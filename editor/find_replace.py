@@ -173,9 +173,10 @@ class FindReplaceDialog(QDialog):
     
     _SEARCH_DEBOUNCE_MS = 300
 
-    def __init__(self, editor: QPlainTextEdit, parent=None):
+    def __init__(self, editor: QPlainTextEdit, parent=None, content_provider=None):
         super().__init__(parent)
         self._editor = editor
+        self._content_provider = content_provider
         self._matches: List[Tuple[int, int]] = []
         self._match_starts: List[int] = []  # cached for bisect lookups
         self._current_match_index: int = -1
@@ -312,9 +313,17 @@ class FindReplaceDialog(QDialog):
             self._search_timer.stop()
             self._do_deferred_search()
     
+    def _get_content(self):
+        """Get searchable content, using cache when available."""
+        if self._content_provider:
+            cached = self._content_provider()
+            if cached is not None:
+                return cached
+        return self._editor.toPlainText()
+
     def _search(self):
         """Perform the search and populate matches."""
-        content = self._editor.toPlainText()
+        content = self._get_content()
         self._matches = FindReplaceEngine.find_positions(content, self.query, self.case_sensitive)
         self._match_starts = [m[0] for m in self._matches]
         
@@ -470,7 +479,7 @@ class FindReplaceDialog(QDialog):
         count = len(self._matches)
         
         if count > 1000:
-            content = self._editor.toPlainText()
+            content = self._get_content()
             new_content, replaced = FindReplaceEngine.replace_all(
                 content, self.query, self.replacement, self.case_sensitive
             )

@@ -206,6 +206,83 @@ class TestFileHandlerErrors:
         assert "Error writing file" in result.error_message
 
 
+class TestFileHandlerMmap:
+    """Tests for mmap-based reading of large files."""
+
+    def test_small_file_uses_regular_read(self, tmp_path):
+        """Files under the mmap threshold use regular read_text."""
+        test_file = tmp_path / "small.txt"
+        content = "Small file content"
+        test_file.write_text(content, encoding="utf-8")
+
+        result = FileHandler.read_file(str(test_file))
+
+        assert result.success is True
+        assert result.content == content
+
+    def test_large_file_uses_mmap(self, tmp_path):
+        """Files over the mmap threshold are read via mmap."""
+        test_file = tmp_path / "large.txt"
+        content = "x" * (FileHandler._MMAP_THRESHOLD + 1)
+        test_file.write_text(content, encoding="utf-8")
+
+        result = FileHandler.read_file(str(test_file))
+
+        assert result.success is True
+        assert result.content == content
+        assert len(result.content) == FileHandler._MMAP_THRESHOLD + 1
+
+    def test_large_file_utf8_via_mmap(self, tmp_path):
+        """Large files with UTF-8 multibyte characters are decoded correctly via mmap."""
+        test_file = tmp_path / "large_utf8.txt"
+        # Each '世' is 3 bytes in UTF-8, so this exceeds 1 MB in bytes
+        repeat_count = (FileHandler._MMAP_THRESHOLD // 3) + 1
+        content = "世" * repeat_count
+        test_file.write_text(content, encoding="utf-8")
+
+        result = FileHandler.read_file(str(test_file))
+
+        assert result.success is True
+        assert result.content == content
+
+    def test_empty_file_returns_empty_string(self, tmp_path):
+        """Empty files return empty string without hitting mmap or read_text."""
+        test_file = tmp_path / "empty.txt"
+        test_file.write_text("", encoding="utf-8")
+
+        result = FileHandler.read_file(str(test_file))
+
+        assert result.success is True
+        assert result.content == ""
+
+    def test_file_exactly_at_threshold(self, tmp_path):
+        """A file exactly at the threshold uses regular read (not mmap)."""
+        test_file = tmp_path / "exact.txt"
+        content = "a" * FileHandler._MMAP_THRESHOLD
+        test_file.write_text(content, encoding="utf-8")
+
+        result = FileHandler.read_file(str(test_file))
+
+        assert result.success is True
+        assert result.content == content
+
+    def test_mmap_threshold_constant(self):
+        """The mmap threshold is 1 MB."""
+        assert FileHandler._MMAP_THRESHOLD == 1_000_000
+
+    def test_large_file_unicode_decode_error(self, tmp_path):
+        """A large binary file that can't be decoded as UTF-8 returns READ_ERROR."""
+        test_file = tmp_path / "binary.bin"
+        # Write invalid UTF-8 bytes exceeding the threshold
+        data = b'\xff\xfe' * (FileHandler._MMAP_THRESHOLD + 1)
+        test_file.write_bytes(data)
+
+        result = FileHandler.read_file(str(test_file))
+
+        assert result.success is False
+        assert result.error == FileError.READ_ERROR
+
+
 class TestFileHandlerRoundTrip:
     """Tests for read/write round-trip behavior."""
     

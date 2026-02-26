@@ -230,3 +230,65 @@ class TestDocumentHtmlContent:
         doc.html_content = "<b>Bold</b>"
         assert doc.content == "Plain text"
         assert doc.html_content == "<b>Bold</b>"
+
+
+class TestDocumentSearchContent:
+    """Tests for _search_content cache."""
+
+    def test_search_content_initialized_with_content(self):
+        """search_content is set to initial content when non-empty."""
+        doc = Document(content="hello world")
+        assert doc.search_content == "hello world"
+
+    def test_search_content_none_for_empty_document(self):
+        """search_content is None when document is created empty."""
+        doc = Document()
+        assert doc.search_content is None
+
+    def test_search_content_none_for_empty_string(self):
+        """search_content is None when document is created with empty string."""
+        doc = Document(content="")
+        assert doc.search_content is None
+
+    def test_content_setter_invalidates_search_content(self):
+        """Setting content clears the search cache."""
+        doc = Document(content="original")
+        assert doc.search_content == "original"
+        doc.content = "modified"
+        assert doc.search_content is None
+
+    def test_invalidate_search_content(self):
+        """invalidate_search_content clears the cache."""
+        doc = Document(content="hello")
+        doc.invalidate_search_content()
+        assert doc.search_content is None
+
+    def test_refresh_search_content(self):
+        """refresh_search_content updates the cache."""
+        doc = Document()
+        assert doc.search_content is None
+        doc.refresh_search_content("new content")
+        assert doc.search_content == "new content"
+
+    def test_mark_saved_updates_search_content(self):
+        """mark_saved refreshes search_content from _content."""
+        doc = Document(content="initial")
+        doc._content = "saved version"
+        doc.mark_saved()
+        assert doc.search_content == "saved version"
+
+    def test_mark_saved_with_path_updates_search_content(self):
+        """mark_saved with file_path also refreshes search_content."""
+        doc = Document(content="data")
+        doc._content = "saved data"
+        doc.mark_saved("/path/to/file.txt")
+        assert doc.search_content == "saved data"
+        assert doc.file_path == "/path/to/file.txt"
+
+    def test_content_setter_then_refresh(self):
+        """Full cycle: set content invalidates, refresh restores."""
+        doc = Document(content="original")
+        doc.content = "edited"
+        assert doc.search_content is None
+        doc.refresh_search_content("edited")
+        assert doc.search_content == "edited"

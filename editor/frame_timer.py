@@ -18,7 +18,8 @@ class FrameTimer(QWidget):
     processing non-idle frames (paint events that follow user input).
     """
 
-    _IDLE_THRESHOLD_S = 0.10  # seconds without input → idle
+    _IDLE_TIMEOUT_MS = 2000  # ms without input → idle
+    _STALL_THRESHOLD_MS = 200  # event-loop blocks longer than this are recorded
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -31,12 +32,18 @@ class FrameTimer(QWidget):
         self._last_input_time: float = 0.0
         self._last_paint_time: float = 0.0
         self._last_event_time: float = 0.0
+        self._has_recent_input: bool = False
 
         self._setup_ui()
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(100)
         self._refresh_timer.timeout.connect(self._update_display)
+
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.setInterval(self._IDLE_TIMEOUT_MS)
+        self._idle_timer.timeout.connect(self._on_idle_timeout)
 
         self.hide()
 
@@ -46,7 +53,7 @@ class FrameTimer(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(6, 2, 6, 2)
 
-        self._label = QLabel("Frame: --  Avg: --  Max: --")
+        self._label = QLabel("Frame: --  Avg: --  Max: --  N: 0")
         self._label.setStyleSheet(
             "QLabel { color: #00ff00; background: rgba(0,0,0,180);"
             " padding: 2px 6px; border-radius: 3px;"
@@ -76,6 +83,7 @@ class FrameTimer(QWidget):
         self._timing = True
         self._last_paint_time = time.perf_counter()
         self._last_input_time = 0.0
+        self._has_recent_input = False
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
         if app:
@@ -91,6 +99,7 @@ class FrameTimer(QWidget):
         if app:
             app.removeEventFilter(self)
         self._refresh_timer.stop()
+        self._idle_timer.stop()
 
     def _reset(self):
         self._frame_times.clear()
@@ -99,7 +108,14 @@ class FrameTimer(QWidget):
         self._last_input_time = 0.0
         self._last_paint_time = 0.0
         self._last_event_time = 0.0
-        self._label.setText("Frame: --  Avg: --  Max: --")
+        self._has_recent_input = False
+        self._label.setText("Frame: --  Avg: --  Max: --  N: 0")
+
+    # ── Idle detection ───────────────────────────────────────────────
+
+    def _on_idle_timeout(self):
+        """Called when no input events have arrived for _IDLE_TIMEOUT_MS."""
+        self._has_recent_input = False
 
     # ── Event filter ─────────────────────────────────────────────────
 
@@ -113,33 +129,28 @@ class FrameTimer(QWidget):
         QEvent.Type.InputMethod,
     })
 
-    _STALL_THRESHOLD_MS = 200  # event-loop blocks longer than this are recorded
-
     def eventFilter(self, obj, event):  # noqa: N802
         now = time.perf_counter()
         etype = event.type()
 
         if etype in self._INPUT_EVENTS:
             self._last_input_time = now
+            self._has_recent_input = True
+            self._idle_timer.start()
 
         elif etype == QEvent.Type.Paint:
-            if self._last_paint_time > 0 and self._last_input_time > 0:
-                # Only record if there was input since the last paint
-                if self._last_input_time > self._last_paint_time:
-                    frame_ms = (now - self._last_input_time) * 1000.0
-                    self._record_frame(frame_ms)
+            if (self._has_recent_input
+                    and self._last_paint_time > 0
+                    and self._last_input_time > self._last_paint_time):
+                frame_ms = (now - self._last_input_time) * 1000.0
+                self._record_frame(frame_ms)
             self._last_paint_time = now
 
         # Stall detection: if there is a large gap between consecutive events
-        # and there was recent user input, the main thread was blocked
-        # (e.g. find/replace search freezing the UI).  The input→paint path
-        # above can miss these when an intermediate widget paint resets the
-        # tracker before the blocking work starts.
-        if self._last_event_time > 0 and self._last_input_time > 0:
+        # and there was recent user input, the main thread was blocked.
+        if self._last_event_time > 0 and self._has_recent_input:
             gap_ms = (now - self._last_event_time) * 1000.0
-            # How long before this gap started was the last input?
-            input_age_s = self._last_event_time - self._last_input_time
-            if gap_ms > self._STALL_THRESHOLD_MS and 0 <= input_age_s < 1.0:
+            if gap_ms > self._STALL_THRESHOLD_MS:
                 self._record_frame(gap_ms)
 
         self._last_event_time = now
@@ -164,10 +175,11 @@ class FrameTimer(QWidget):
 
     def _update_display(self):
         if not self._frame_times:
-            self._label.setText("Frame: --  Avg: --  Max: --")
+            self._label.setText("Frame: --  Avg: --  Max: --  N: 0")
             return
         self._label.setText(
             f"Frame: {self._last_frame_ms:6.1f}ms  "
             f"Avg: {self._average_ms():6.1f}ms  "
-            f"Max: {self._max_frame_ms:6.1f}ms"
+            f"Max: {self._max_frame_ms:6.1f}ms  "
+            f"N: {len(self._frame_times)}"
         )

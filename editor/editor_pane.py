@@ -313,6 +313,7 @@ class EditorPane(QWidget):
         doc = self.current_document
         if doc is None:
             return
+        doc.invalidate_search_content()
         
         # Don't set modified=True if Qt's internal modification flag is False
         # (this happens during undo/redo back to clean state)

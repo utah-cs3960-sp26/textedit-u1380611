@@ -190,10 +190,11 @@ class TestStallDetection:
         initial_count = len(frame_timer._frame_times)
 
         # Simulate: input at T-1.01, follow-up event at T-1.0, then 1s block
-        # input_age = last_event - last_input = 0.01s (input was right before gap)
+        # _has_recent_input flag indicates user was recently active
         frame_timer._last_input_time = now - 1.01
         frame_timer._last_event_time = now - 1.0  # last event 1 second ago
         frame_timer._last_paint_time = now - 1.0
+        frame_timer._has_recent_input = True
 
         # Next event arrives after the 1-second stall
         paint_event = QPaintEvent(dummy.rect())
@@ -270,3 +271,90 @@ class TestTimingControl:
         frame_timer._start_timing()
         frame_timer._stop_timing()
         assert not frame_timer._timing
+
+    def test_stop_timing_stops_idle_timer(self, frame_timer, qapp):
+        frame_timer._start_timing()
+        frame_timer._idle_timer.start()
+        assert frame_timer._idle_timer.isActive()
+        frame_timer._stop_timing()
+        assert not frame_timer._idle_timer.isActive()
+
+
+class TestIdleDetection:
+    """Test flag-based idle detection."""
+
+    def test_input_event_sets_has_recent_input(self, frame_timer, qapp):
+        """Input events should set _has_recent_input to True."""
+        frame_timer.toggle()
+        dummy = QWidget()
+
+        assert not frame_timer._has_recent_input
+
+        key_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier)
+        frame_timer.eventFilter(dummy, key_event)
+
+        assert frame_timer._has_recent_input
+        dummy.deleteLater()
+
+    def test_input_event_starts_idle_timer(self, frame_timer, qapp):
+        """Input events should start the idle timer."""
+        frame_timer.toggle()
+        dummy = QWidget()
+
+        key_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier)
+        frame_timer.eventFilter(dummy, key_event)
+
+        assert frame_timer._idle_timer.isActive()
+        dummy.deleteLater()
+
+    def test_idle_timeout_clears_flag(self, frame_timer, qapp):
+        """When idle timer fires, _has_recent_input should be cleared."""
+        frame_timer._has_recent_input = True
+        frame_timer._on_idle_timeout()
+        assert not frame_timer._has_recent_input
+
+    def test_start_timing_initializes_flag_false(self, frame_timer, qapp):
+        """_start_timing should set _has_recent_input to False."""
+        frame_timer._has_recent_input = True
+        frame_timer._start_timing()
+        assert not frame_timer._has_recent_input
+        frame_timer._stop_timing()
+
+    def test_reset_clears_flag(self, frame_timer):
+        """Reset should clear _has_recent_input."""
+        frame_timer._has_recent_input = True
+        frame_timer._reset()
+        assert not frame_timer._has_recent_input
+
+    def test_idle_timeout_ms_value(self, frame_timer):
+        """Idle timer should use 2000ms timeout."""
+        assert frame_timer._IDLE_TIMEOUT_MS == 2000
+        assert frame_timer._idle_timer.interval() == 2000
+
+    def test_idle_timer_is_singleshot(self, frame_timer):
+        """Idle timer should be single-shot."""
+        assert frame_timer._idle_timer.isSingleShot()
+
+
+class TestDisplayFormat:
+    """Test the N: count in the display."""
+
+    def test_display_shows_frame_count(self, frame_timer):
+        """Display should show the number of recorded frames."""
+        frame_timer._record_frame(5.0)
+        frame_timer._record_frame(10.0)
+        frame_timer._update_display()
+        text = frame_timer._label.text()
+        assert "N: 2" in text
+
+    def test_display_empty_shows_zero_count(self, frame_timer):
+        """Display with no data should show N: 0."""
+        frame_timer._update_display()
+        assert "N: 0" in frame_timer._label.text()
+
+    def test_display_shows_five_frames(self, frame_timer):
+        """Display should show correct count after multiple frames."""
+        for i in range(5):
+            frame_timer._record_frame(float(i + 1))
+        frame_timer._update_display()
+        assert "N: 5" in frame_timer._label.text()
