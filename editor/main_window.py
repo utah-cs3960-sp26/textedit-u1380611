@@ -376,7 +376,8 @@ class MainWindow(QMainWindow):
         editor = self._get_active_editor()
         if editor:
             cursor = editor.textCursor()
-            line = cursor.blockNumber() + 1
+            base = getattr(editor, '_line_number_base', 0)
+            line = base + cursor.blockNumber() + 1
             column = cursor.columnNumber() + 1
             self._position_label.setText(f"Ln {line}, Col {column}")
         
@@ -392,6 +393,10 @@ class MainWindow(QMainWindow):
         
         editor = self._get_active_editor()
         if editor:
+            try:
+                editor.cursorPositionChanged.disconnect(self._on_cursor_position_changed)
+            except RuntimeError:
+                pass
             editor.cursorPositionChanged.connect(self._on_cursor_position_changed)
     
     def _on_document_modified(self, document: Document, modified: bool):
@@ -409,7 +414,9 @@ class MainWindow(QMainWindow):
         editor = self._get_active_editor()
         if editor:
             cursor = editor.textCursor()
-            line = cursor.blockNumber() + 1
+            # Account for virtualised documents where block numbers are local
+            base = getattr(editor, '_line_number_base', 0)
+            line = base + cursor.blockNumber() + 1
             column = cursor.columnNumber() + 1
             self._position_label.setText(f"Ln {line}, Col {column}")
     

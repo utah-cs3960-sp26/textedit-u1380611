@@ -4,7 +4,7 @@ import time
 import pytest
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtGui import QKeyEvent, QPaintEvent
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QWidget
 
 from editor.frame_timer import FrameTimer
@@ -76,6 +76,13 @@ class TestToggle:
         frame_timer.toggle()
         assert not frame_timer._refresh_timer.isActive()
 
+    def test_tick_timer_runs_while_visible(self, frame_timer):
+        frame_timer.toggle()
+        assert frame_timer._tick_timer.isActive()
+
+        frame_timer.toggle()
+        assert not frame_timer._tick_timer.isActive()
+
 
 class TestRecordFrame:
     """Test frame recording logic."""
@@ -122,51 +129,18 @@ class TestUpdateDisplay:
 
 
 class TestEventFilter:
-    """Test the event filter that captures frame timings."""
+    """Test the event filter that captures input events."""
 
-    def test_input_event_sets_last_input_time(self, frame_timer, qapp):
-        frame_timer.toggle()  # start timing
-        dummy = QWidget()
-
-        before = time.perf_counter()
-        key_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier)
-        frame_timer.eventFilter(dummy, key_event)
-        after = time.perf_counter()
-
-        assert before <= frame_timer._last_input_time <= after
-        dummy.deleteLater()
-
-    def test_paint_after_input_records_frame(self, frame_timer, qapp):
+    def test_input_event_sets_recent_input(self, frame_timer, qapp):
         frame_timer.toggle()
         dummy = QWidget()
 
-        # Simulate input
+        assert not frame_timer._has_recent_input
+
         key_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier)
         frame_timer.eventFilter(dummy, key_event)
 
-        # Small delay so the paint comes after input
-        time.sleep(0.001)
-
-        # Simulate paint
-        paint_event = QPaintEvent(dummy.rect())
-        frame_timer.eventFilter(dummy, paint_event)
-
-        assert len(frame_timer._frame_times) == 1
-        assert frame_timer._last_frame_ms > 0
-        dummy.deleteLater()
-
-    def test_paint_without_input_not_recorded(self, frame_timer, qapp):
-        frame_timer.toggle()
-        dummy = QWidget()
-
-        # Set a past paint time but no input
-        frame_timer._last_paint_time = time.perf_counter()
-        frame_timer._last_input_time = 0.0
-
-        paint_event = QPaintEvent(dummy.rect())
-        frame_timer.eventFilter(dummy, paint_event)
-
-        assert len(frame_timer._frame_times) == 0
+        assert frame_timer._has_recent_input
         dummy.deleteLater()
 
     def test_event_filter_returns_false(self, frame_timer, qapp):
@@ -177,81 +151,81 @@ class TestEventFilter:
         assert result is False
         dummy.deleteLater()
 
-
-class TestStallDetection:
-    """Test event-loop stall detection for blocking operations."""
-
-    def test_stall_detected_after_input(self, frame_timer, qapp):
-        """A large gap between events after recent input should be recorded."""
+    def test_non_input_event_does_not_set_flag(self, frame_timer, qapp):
         frame_timer.toggle()
         dummy = QWidget()
-
-        now = time.perf_counter()
-        initial_count = len(frame_timer._frame_times)
-
-        # Simulate: input at T-1.01, follow-up event at T-1.0, then 1s block
-        # _has_recent_input flag indicates user was recently active
-        frame_timer._last_input_time = now - 1.01
-        frame_timer._last_event_time = now - 1.0  # last event 1 second ago
-        frame_timer._last_paint_time = now - 1.0
-        frame_timer._has_recent_input = True
-
-        # Next event arrives after the 1-second stall
-        paint_event = QPaintEvent(dummy.rect())
-        frame_timer.eventFilter(dummy, paint_event)
-
-        assert len(frame_timer._frame_times) > initial_count
-        # The stall should be ~1000ms
-        assert frame_timer._frame_times[-1] > 500
-
-        dummy.deleteLater()
-
-    def test_no_stall_during_idle(self, frame_timer, qapp):
-        """Gaps without recent input (idle time) should NOT be recorded as stalls."""
-        frame_timer.toggle()
-        dummy = QWidget()
-
-        # Set input time far in the past (user idle for > 1 second)
-        frame_timer._last_input_time = time.perf_counter() - 5.0
-        frame_timer._last_event_time = time.perf_counter() - 1.0
-
-        initial_count = len(frame_timer._frame_times)
-
-        # Event arrives after gap, but no recent input → should not record
-        paint_event = QPaintEvent(dummy.rect())
-        frame_timer.eventFilter(dummy, paint_event)
-
-        assert len(frame_timer._frame_times) == initial_count
-
-        dummy.deleteLater()
-
-    def test_stall_threshold(self, frame_timer, qapp):
-        """Gaps below the stall threshold should not be recorded as stalls."""
-        frame_timer.toggle()
-        dummy = QWidget()
-
-        # Input event
-        key_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier)
-        frame_timer.eventFilter(dummy, key_event)
-
-        # Small gap (< 200ms) — should not trigger stall detection
-        frame_timer._last_event_time = time.perf_counter() - 0.05  # 50ms ago
-        initial_count = len(frame_timer._frame_times)
 
         timer_event = QEvent(QEvent.Type.Timer)
         frame_timer.eventFilter(dummy, timer_event)
 
-        # Only the input→paint path or nothing should fire, not stall detection
-        stall_frames = [f for f in frame_timer._frame_times[initial_count:] if f > 200]
-        assert len(stall_frames) == 0
-
+        assert not frame_timer._has_recent_input
         dummy.deleteLater()
 
-    def test_reset_clears_event_time(self, frame_timer):
-        """Reset should clear _last_event_time."""
-        frame_timer._last_event_time = 12345.0
-        frame_timer._reset()
-        assert frame_timer._last_event_time == 0.0
+    def test_input_starts_idle_timer(self, frame_timer, qapp):
+        frame_timer.toggle()
+        dummy = QWidget()
+
+        key_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier)
+        frame_timer.eventFilter(dummy, key_event)
+
+        assert frame_timer._idle_timer.isActive()
+        dummy.deleteLater()
+
+
+class TestTickMeasurement:
+    """Test the 0ms timer tick that measures event-loop stalls."""
+
+    def test_tick_records_when_input_active(self, frame_timer, qapp):
+        """A tick after a previous tick with recent input should record."""
+        frame_timer.toggle()
+        frame_timer._has_recent_input = True
+        frame_timer._last_tick = time.perf_counter() - 0.010  # 10ms ago
+
+        frame_timer._on_tick()
+
+        assert len(frame_timer._frame_times) == 1
+        assert frame_timer._last_frame_ms >= 9.0  # ~10ms with tolerance
+
+    def test_tick_does_not_record_without_input(self, frame_timer, qapp):
+        """Ticks without recent input should not record frames."""
+        frame_timer.toggle()
+        frame_timer._has_recent_input = False
+        frame_timer._last_tick = time.perf_counter() - 0.050
+
+        frame_timer._on_tick()
+
+        assert len(frame_timer._frame_times) == 0
+
+    def test_tick_ignores_sub_1ms(self, frame_timer, qapp):
+        """Sub-1ms ticks are idle event-loop iterations, not frames."""
+        frame_timer.toggle()
+        frame_timer._has_recent_input = True
+        frame_timer._last_tick = time.perf_counter()  # just now
+
+        frame_timer._on_tick()
+
+        assert len(frame_timer._frame_times) == 0
+
+    def test_tick_updates_last_tick(self, frame_timer, qapp):
+        """Each tick should update _last_tick."""
+        frame_timer.toggle()
+        old = frame_timer._last_tick
+
+        time.sleep(0.002)
+        frame_timer._on_tick()
+
+        assert frame_timer._last_tick > old
+
+    def test_simulated_stall(self, frame_timer, qapp):
+        """Simulate a 200ms main-thread stall and verify it's recorded."""
+        frame_timer.toggle()
+        frame_timer._has_recent_input = True
+        frame_timer._last_tick = time.perf_counter() - 0.200  # 200ms ago
+
+        frame_timer._on_tick()
+
+        assert len(frame_timer._frame_times) == 1
+        assert frame_timer._last_frame_ms >= 190.0
 
 
 class TestTimingControl:
@@ -283,56 +257,27 @@ class TestTimingControl:
 class TestIdleDetection:
     """Test flag-based idle detection."""
 
-    def test_input_event_sets_has_recent_input(self, frame_timer, qapp):
-        """Input events should set _has_recent_input to True."""
-        frame_timer.toggle()
-        dummy = QWidget()
-
-        assert not frame_timer._has_recent_input
-
-        key_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier)
-        frame_timer.eventFilter(dummy, key_event)
-
-        assert frame_timer._has_recent_input
-        dummy.deleteLater()
-
-    def test_input_event_starts_idle_timer(self, frame_timer, qapp):
-        """Input events should start the idle timer."""
-        frame_timer.toggle()
-        dummy = QWidget()
-
-        key_event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier)
-        frame_timer.eventFilter(dummy, key_event)
-
-        assert frame_timer._idle_timer.isActive()
-        dummy.deleteLater()
-
     def test_idle_timeout_clears_flag(self, frame_timer, qapp):
-        """When idle timer fires, _has_recent_input should be cleared."""
         frame_timer._has_recent_input = True
         frame_timer._on_idle_timeout()
         assert not frame_timer._has_recent_input
 
     def test_start_timing_initializes_flag_false(self, frame_timer, qapp):
-        """_start_timing should set _has_recent_input to False."""
         frame_timer._has_recent_input = True
         frame_timer._start_timing()
         assert not frame_timer._has_recent_input
         frame_timer._stop_timing()
 
     def test_reset_clears_flag(self, frame_timer):
-        """Reset should clear _has_recent_input."""
         frame_timer._has_recent_input = True
         frame_timer._reset()
         assert not frame_timer._has_recent_input
 
     def test_idle_timeout_ms_value(self, frame_timer):
-        """Idle timer should use 2000ms timeout."""
         assert frame_timer._IDLE_TIMEOUT_MS == 2000
         assert frame_timer._idle_timer.interval() == 2000
 
     def test_idle_timer_is_singleshot(self, frame_timer):
-        """Idle timer should be single-shot."""
         assert frame_timer._idle_timer.isSingleShot()
 
 
@@ -340,7 +285,6 @@ class TestDisplayFormat:
     """Test the N: count in the display."""
 
     def test_display_shows_frame_count(self, frame_timer):
-        """Display should show the number of recorded frames."""
         frame_timer._record_frame(5.0)
         frame_timer._record_frame(10.0)
         frame_timer._update_display()
@@ -348,12 +292,10 @@ class TestDisplayFormat:
         assert "N: 2" in text
 
     def test_display_empty_shows_zero_count(self, frame_timer):
-        """Display with no data should show N: 0."""
         frame_timer._update_display()
         assert "N: 0" in frame_timer._label.text()
 
     def test_display_shows_five_frames(self, frame_timer):
-        """Display should show correct count after multiple frames."""
         for i in range(5):
             frame_timer._record_frame(float(i + 1))
         frame_timer._update_display()

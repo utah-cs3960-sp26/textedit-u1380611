@@ -191,6 +191,11 @@ class FindReplaceDialog(QDialog):
         self._search_timer.setInterval(self._SEARCH_DEBOUNCE_MS)
         self._search_timer.timeout.connect(self._do_deferred_search)
         
+        self._scroll_highlight_timer = QTimer(self)
+        self._scroll_highlight_timer.setSingleShot(True)
+        self._scroll_highlight_timer.setInterval(0)
+        self._scroll_highlight_timer.timeout.connect(self._update_highlights)
+        
         self._setup_ui()
         self._editor.updateRequest.connect(self._on_viewport_scrolled)
         self.setWindowTitle("Find and Replace")
@@ -484,7 +489,13 @@ class FindReplaceDialog(QDialog):
                 content, self.query, self.replacement, self.case_sensitive
             )
             if replaced > 0:
+                # Disable updates and undo during bulk replace to minimize GUI stalls
+                self._editor.setUpdatesEnabled(False)
+                doc = self._editor.document()
+                doc.setUndoRedoEnabled(False)
                 self._editor.setPlainText(new_content)
+                doc.setUndoRedoEnabled(True)
+                self._editor.setUpdatesEnabled(True)
             self._search()
             self._update_highlights()
             self._status_label.setText(f"Replaced {replaced} occurrence(s)")
@@ -501,9 +512,10 @@ class FindReplaceDialog(QDialog):
             self._status_label.setText(f"Replaced {count} occurrence(s)")
     
     def _on_viewport_scrolled(self, rect, dy):
-        """Refresh visible highlights when viewport scrolls."""
+        """Coalesce highlight refresh when viewport scrolls."""
         if dy != 0 and self._matches and len(self._matches) > self._HIGHLIGHT_ALL_THRESHOLD:
-            self._update_highlights()
+            if not self._scroll_highlight_timer.isActive():
+                self._scroll_highlight_timer.start()
     
     def closeEvent(self, event):
         """Clear highlights when closing."""

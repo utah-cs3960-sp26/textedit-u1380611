@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 from uuid import uuid4
 
+from PySide6.QtGui import QTextDocument
+
 
 @dataclass
 class CursorPosition:
@@ -50,6 +52,7 @@ class Document:
         self._scroll_position: tuple[int, int] = (0, 0)
         self._has_rich_formatting: bool = False
         self._search_content: str | None = content if content else None
+        self._qt_document: QTextDocument | None = None
     
     @property
     def id(self) -> str:
@@ -138,6 +141,15 @@ class Document:
     @has_rich_formatting.setter
     def has_rich_formatting(self, value: bool):
         self._has_rich_formatting = value
+
+    @property
+    def qt_document(self) -> QTextDocument | None:
+        """Cached QTextDocument for fast tab switching."""
+        return self._qt_document
+
+    @qt_document.setter
+    def qt_document(self, value: QTextDocument | None):
+        self._qt_document = value
 
     @property
     def search_content(self) -> str | None:

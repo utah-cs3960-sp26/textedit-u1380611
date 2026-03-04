@@ -64,6 +64,12 @@ class LineNumberedEditor(QPlainTextEdit):
         self._current_line_color = QColor("#c9d1d9")
         self._current_line_bg = QColor("#21262d")
         
+        # Virtualisation support: offset added to block numbers for gutter display
+        self._line_number_base: int = 0
+        self._line_number_total: int | None = None
+        # Wheel-event callback for virtualised scrolling
+        self._virtual_wheel_handler = None
+        
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.cursorPositionChanged.connect(self._highlight_current_line)
@@ -80,10 +86,23 @@ class LineNumberedEditor(QPlainTextEdit):
         self._line_number_area.update()
         self._highlight_current_line()
     
+    def set_line_number_context(self, base_line0: int, total_lines: int | None):
+        """Set virtualisation context for the gutter.
+
+        Args:
+            base_line0: global 0-based line number of the first block.
+            total_lines: total lines in the full document (for gutter width).
+                         Pass ``None`` to revert to normal mode.
+        """
+        self._line_number_base = base_line0
+        self._line_number_total = total_lines
+        self._update_line_number_area_width(0)
+        self._line_number_area.update()
+    
     def line_number_area_width(self) -> int:
         """Calculate the width needed for line numbers."""
         digits = 1
-        max_num = max(1, self.blockCount())
+        max_num = max(1, self._line_number_total or self.blockCount())
         while max_num >= 10:
             max_num //= 10
             digits += 1
@@ -101,9 +120,6 @@ class LineNumberedEditor(QPlainTextEdit):
             self._line_number_area.scroll(0, dy)
         else:
             self._line_number_area.update(0, rect.y(), self._line_number_area.width(), rect.height())
-        
-        if rect.contains(self.viewport().rect()):
-            self._update_line_number_area_width(0)
     
     def resizeEvent(self, event):
         """Handle resize to adjust line number area."""
@@ -140,10 +156,11 @@ class LineNumberedEditor(QPlainTextEdit):
         bottom = top + int(self.blockBoundingRect(block).height())
         
         current_block = self.textCursor().blockNumber()
+        base = self._line_number_base
         
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
-                number = str(block_number + 1)
+                number = str(base + block_number + 1)
                 
                 if block_number == current_block:
                     painter.setPen(self._current_line_color)
@@ -162,3 +179,11 @@ class LineNumberedEditor(QPlainTextEdit):
             top = bottom
             bottom = top + int(self.blockBoundingRect(block).height())
             block_number += 1
+    
+    def wheelEvent(self, event):
+        """Route wheel events through the virtual controller when active."""
+        if self._virtual_wheel_handler is not None:
+            self._virtual_wheel_handler(event)
+            event.accept()
+        else:
+            super().wheelEvent(event)

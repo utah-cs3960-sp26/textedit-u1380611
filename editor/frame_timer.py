@@ -1,8 +1,12 @@
 """
 Frame Timer Widget
 
-Displays last, average, and max frame timings with idle time subtracted.
-Activated via Ctrl+P. Resets and stops timing when hidden.
+Measures how long the GUI thread is blocked (dropped frames).
+A "frame" is the wall-clock time between consecutive returns to the
+event loop.  If the main thread is blocked for 50ms doing layout work,
+that shows up as a 50ms frame.
+
+Activated via Ctrl+P.  Resets and stops timing when hidden.
 """
 
 import time
@@ -14,12 +18,14 @@ from PySide6.QtCore import QTimer, Qt, QEvent
 class FrameTimer(QWidget):
     """Overlay widget showing frame timing statistics.
 
-    Installs an application-level event filter to measure time spent
-    processing non-idle frames (paint events that follow user input).
+    Uses a 0ms repeating timer to detect event-loop stalls.
+    A QTimer with 0ms interval fires once per event-loop iteration.
+    If two consecutive firings are separated by >1ms it means the
+    main thread was busy for that long — a dropped frame.
     """
 
-    _IDLE_TIMEOUT_MS = 2000  # ms without input → idle
-    _STALL_THRESHOLD_MS = 200  # event-loop blocks longer than this are recorded
+    _IDLE_TIMEOUT_MS = 2000   # no input for this long → stop recording
+    _MIN_FRAME_MS = 1.0       # ignore sub-1ms idle ticks
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -29,17 +35,22 @@ class FrameTimer(QWidget):
         self._last_frame_ms: float = 0.0
         self._max_frame_ms: float = 0.0
 
-        self._last_input_time: float = 0.0
-        self._last_paint_time: float = 0.0
-        self._last_event_time: float = 0.0
+        self._last_tick: float = 0.0
         self._has_recent_input: bool = False
 
         self._setup_ui()
 
+        # 0ms timer fires once per event-loop iteration
+        self._tick_timer = QTimer(self)
+        self._tick_timer.setInterval(0)
+        self._tick_timer.timeout.connect(self._on_tick)
+
+        # Display refresh (10 Hz)
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(100)
         self._refresh_timer.timeout.connect(self._update_display)
 
+        # Idle detection — stop recording when the user stops interacting
         self._idle_timer = QTimer(self)
         self._idle_timer.setSingleShot(True)
         self._idle_timer.setInterval(self._IDLE_TIMEOUT_MS)
@@ -81,13 +92,13 @@ class FrameTimer(QWidget):
         if self._timing:
             return
         self._timing = True
-        self._last_paint_time = time.perf_counter()
-        self._last_input_time = 0.0
+        self._last_tick = time.perf_counter()
         self._has_recent_input = False
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
         if app:
             app.installEventFilter(self)
+        self._tick_timer.start()
         self._refresh_timer.start()
 
     def _stop_timing(self):
@@ -98,6 +109,7 @@ class FrameTimer(QWidget):
         app = QApplication.instance()
         if app:
             app.removeEventFilter(self)
+        self._tick_timer.stop()
         self._refresh_timer.stop()
         self._idle_timer.stop()
 
@@ -105,57 +117,40 @@ class FrameTimer(QWidget):
         self._frame_times.clear()
         self._last_frame_ms = 0.0
         self._max_frame_ms = 0.0
-        self._last_input_time = 0.0
-        self._last_paint_time = 0.0
-        self._last_event_time = 0.0
+        self._last_tick = 0.0
         self._has_recent_input = False
         self._label.setText("Frame: --  Avg: --  Max: --  N: 0")
 
     # ── Idle detection ───────────────────────────────────────────────
 
     def _on_idle_timeout(self):
-        """Called when no input events have arrived for _IDLE_TIMEOUT_MS."""
         self._has_recent_input = False
 
-    # ── Event filter ─────────────────────────────────────────────────
+    # ── Event filter (only for input detection) ──────────────────────
 
     _INPUT_EVENTS = frozenset({
         QEvent.Type.KeyPress,
-        QEvent.Type.KeyRelease,
         QEvent.Type.MouseButtonPress,
         QEvent.Type.MouseButtonRelease,
-        QEvent.Type.MouseMove,
         QEvent.Type.Wheel,
         QEvent.Type.InputMethod,
     })
 
     def eventFilter(self, obj, event):  # noqa: N802
-        now = time.perf_counter()
-        etype = event.type()
-
-        if etype in self._INPUT_EVENTS:
-            self._last_input_time = now
+        if event.type() in self._INPUT_EVENTS:
             self._has_recent_input = True
             self._idle_timer.start()
-
-        elif etype == QEvent.Type.Paint:
-            if (self._has_recent_input
-                    and self._last_paint_time > 0
-                    and self._last_input_time > self._last_paint_time):
-                frame_ms = (now - self._last_input_time) * 1000.0
-                self._record_frame(frame_ms)
-            self._last_paint_time = now
-
-        # Stall detection: if there is a large gap between consecutive events
-        # and there was recent user input, the main thread was blocked.
-        if self._last_event_time > 0 and self._has_recent_input:
-            gap_ms = (now - self._last_event_time) * 1000.0
-            if gap_ms > self._STALL_THRESHOLD_MS:
-                self._record_frame(gap_ms)
-
-        self._last_event_time = now
-
         return False
+
+    # ── Tick — fires once per event-loop iteration ───────────────────
+
+    def _on_tick(self):
+        now = time.perf_counter()
+        if self._last_tick > 0 and self._has_recent_input:
+            elapsed_ms = (now - self._last_tick) * 1000.0
+            if elapsed_ms >= self._MIN_FRAME_MS:
+                self._record_frame(elapsed_ms)
+        self._last_tick = now
 
     # ── Recording & display ──────────────────────────────────────────
 
@@ -164,7 +159,6 @@ class FrameTimer(QWidget):
         if ms > self._max_frame_ms:
             self._max_frame_ms = ms
         self._frame_times.append(ms)
-        # Keep bounded so average stays meaningful over recent history
         if len(self._frame_times) > 500:
             self._frame_times = self._frame_times[-500:]
 
