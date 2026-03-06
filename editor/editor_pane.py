@@ -7,7 +7,7 @@ Manages multiple documents via tabs.
 
 from typing import Optional
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPlainTextEdit, QMessageBox, QScrollBar
-from PySide6.QtCore import Signal, Qt, QTimer, QCoreApplication
+from PySide6.QtCore import Signal, Qt, QTimer, QCoreApplication, QElapsedTimer
 from PySide6.QtGui import QTextCursor, QTextDocument
 from PySide6.QtWidgets import QPlainTextDocumentLayout
 
@@ -280,8 +280,7 @@ class EditorPane(QWidget):
             doc.qt_document = None
     
     _LARGE_DOC_THRESHOLD = 1_000_000  # 1MB
-    _VIRTUAL_THRESHOLD = 5_000_000   # 5MB – use virtualised loading above this
-    _CHUNK_SIZE = 2_000_000  # 2MB per chunk for chunked loading
+    _VIRTUAL_THRESHOLD = 2_000_000   # 2MB – use virtualised loading above this
     
     def _is_virtual(self, document: Document) -> bool:
         """Whether *document* should use virtualised (viewport-only) loading."""
@@ -297,6 +296,16 @@ class EditorPane(QWidget):
         For very large files (>5MB), uses virtualised viewport loading.
         For moderately large files, uses chunked insertion.
         """
+        # Cancel any in-progress incremental load
+        if hasattr(self, '_load_timer') and self._load_timer is not None:
+            self._load_timer.stop()
+            self._load_timer.deleteLater()
+            self._load_timer = None
+            self._load_text = None
+            self._load_cursor = None
+            self._editor.setUpdatesEnabled(True)
+            self._editor.setReadOnly(False)
+
         # Detach any active virtualisation first
         self._virtual_controller.detach()
         self._editor._virtual_wheel_handler = None
@@ -475,28 +484,65 @@ class EditorPane(QWidget):
         doc.setUndoRedoEnabled(False)
         return doc
 
-    def _load_content_chunked(self, content: str):
-        """Load large content in chunks with updates disabled to reduce stall time."""
+    _INCREMENTAL_CHUNK = 128_000   # bytes per inner-loop chunk
+    _BUDGET_MS = 8                  # max ms of work per timer tick
+
+    def _load_content_chunked(self, content: str, on_done=None):
+        """Load large content incrementally using a timer that stays within a per-frame budget.
+
+        Instead of blocking the main thread for the entire document, this inserts
+        ~128KB chunks and yields back to the event loop every ~8ms so the GUI
+        remains responsive during loading.
+        """
         doc = self._editor.document()
         doc.setUndoRedoEnabled(False)
         self._editor.setUpdatesEnabled(False)
-        
-        # Start with empty document
+        self._editor.setReadOnly(True)
+
         self._editor.setPlainText("")
         cursor = QTextCursor(doc)
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        
-        offset = 0
-        total = len(content)
-        while offset < total:
-            end = min(offset + self._CHUNK_SIZE, total)
-            cursor.insertText(content[offset:end])
-            offset = end
-            # Let Qt process pending events between chunks to keep UI responsive
-            QCoreApplication.processEvents()
-        
-        doc.setUndoRedoEnabled(True)
-        self._editor.setUpdatesEnabled(True)
+
+        self._load_text = content
+        self._load_offset = 0
+        self._load_cursor = cursor
+        self._load_on_done = on_done
+
+        self._load_timer = QTimer(self)
+        self._load_timer.setInterval(0)
+        self._load_timer.timeout.connect(self._load_step)
+        self._load_timer.start()
+
+    def _load_step(self):
+        """Insert chunks until the time budget is exhausted, then yield."""
+        if self._load_text is None:
+            if self._load_timer is not None:
+                self._load_timer.stop()
+            return
+        elapsed = QElapsedTimer()
+        elapsed.start()
+        total = len(self._load_text)
+        chunk = self._INCREMENTAL_CHUNK
+
+        while self._load_offset < total and elapsed.elapsed() < self._BUDGET_MS:
+            end = min(self._load_offset + chunk, total)
+            self._load_cursor.insertText(self._load_text[self._load_offset:end])
+            self._load_offset = end
+
+        if self._load_offset >= total:
+            self._load_timer.stop()
+            self._load_timer.deleteLater()
+            self._load_timer = None
+            doc = self._editor.document()
+            doc.setUndoRedoEnabled(True)
+            self._editor.setUpdatesEnabled(True)
+            self._editor.setReadOnly(False)
+            self._load_text = None
+            self._load_cursor = None
+            cb = self._load_on_done
+            self._load_on_done = None
+            if cb:
+                cb()
     
     def _on_tab_changed(self, index: int):
         """Handle tab selection change."""

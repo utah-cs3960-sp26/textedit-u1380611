@@ -107,20 +107,21 @@ class TestQTextDocumentCaching:
 
 
 class TestChunkedLoading:
-    """Tests for chunked loading of large files."""
+    """Tests for incremental (timer-driven) loading of large files."""
 
     def test_load_content_chunked_preserves_content(self, pane):
         """Chunked loading produces the same content as the original."""
         content = "line\n" * 5000
         pane._load_content_chunked(content)
+        # Drain the incremental timer
+        while pane._load_timer is not None:
+            pane._load_step()
         result = pane._editor.toPlainText()
-        # insertText keeps trailing newline, toPlainText includes it
         assert result.replace('\n', '') == content.replace('\n', '')
         assert result.count('\n') == content.count('\n')
 
     def test_large_file_uses_chunked_loading(self, pane):
-        """Files above _LARGE_DOC_THRESHOLD use chunked loading on first load."""
-        # Create content larger than threshold
+        """Files between 1MB and 2MB use chunked loading on first load."""
         threshold = pane._LARGE_DOC_THRESHOLD
         content = "x" * (threshold + 100)
         doc = Document(content=content)
@@ -168,18 +169,19 @@ class TestScrollHighlightCoalescing:
         dialog = FindReplaceDialog(editor)
         assert hasattr(dialog, '_scroll_highlight_timer')
         assert dialog._scroll_highlight_timer.isSingleShot()
-        assert dialog._scroll_highlight_timer.interval() == 0
+        assert dialog._scroll_highlight_timer.interval() == 16
         editor.deleteLater()
         dialog.deleteLater()
 
     def test_scroll_starts_coalesce_timer(self, qapp):
         """Scrolling with many matches starts the coalesce timer instead of immediate refresh."""
         editor = LineNumberedEditor()
-        content = "word " * 2000  # >1000 matches
+        content = "word " * 2000  # >500 matches
         editor.setPlainText(content)
         dialog = FindReplaceDialog(editor)
         dialog._find_edit.setText("word")
         dialog._do_deferred_search()
+        dialog._ensure_search_complete()
 
         assert len(dialog._matches) > dialog._HIGHLIGHT_ALL_THRESHOLD
 
@@ -198,7 +200,7 @@ class TestOptimizedBulkReplace:
     """Tests for optimized Replace All with updates disabled."""
 
     def test_bulk_replace_disables_updates(self, qapp):
-        """Replace All for >1000 matches disables updates and undo during replacement."""
+        """Replace All for >1000 matches runs in background and replaces correctly."""
         editor = LineNumberedEditor()
         content = "word " * 2000
         editor.setPlainText(content)
@@ -206,11 +208,13 @@ class TestOptimizedBulkReplace:
         dialog._find_edit.setText("word")
         dialog._replace_edit.setText("WORD")
         dialog._do_deferred_search()
+        dialog._ensure_search_complete()
 
         assert len(dialog._matches) > 1000
 
-        # Perform replace all
+        # Perform replace all (now async)
         dialog._replace_all()
+        dialog._ensure_replace_complete()
 
         # Verify content was replaced correctly
         result = editor.toPlainText()
@@ -259,3 +263,130 @@ class TestFindReplaceEngineCorrectness:
         new_content, count = FindReplaceEngine.replace_all(content, "abc", "xyz", False)
         assert count == 3
         assert new_content == "xyz xyz xyz"
+
+
+class TestUnifiedExtraSelections:
+    """Tests for unified extra-selection ownership in LineNumberedEditor."""
+
+    def test_current_line_highlight_skips_column_moves(self, editor):
+        """Column-only cursor moves don't trigger setExtraSelections."""
+        editor.setPlainText("hello world")
+        cursor = editor.textCursor()
+        cursor.setPosition(0)
+        editor.setTextCursor(cursor)
+        editor._highlight_current_line()  # block 0
+        initial_block = editor._last_current_block
+        assert initial_block == 0
+
+        # Move within same line
+        cursor.setPosition(5)
+        editor.setTextCursor(cursor)
+        editor._highlight_current_line()
+        assert editor._last_current_block == 0  # unchanged
+
+    def test_set_search_selections_merges_with_current_line(self, editor):
+        """set_search_selections appends to current-line highlight."""
+        from PySide6.QtWidgets import QTextEdit
+        from PySide6.QtGui import QTextCharFormat
+
+        editor.setPlainText("aaa bbb aaa")
+        editor._highlight_current_line()
+        assert editor._current_line_selection is not None
+
+        # Create a fake search selection
+        sel = QTextEdit.ExtraSelection()
+        sel.cursor = editor.textCursor()
+        sel.format = QTextCharFormat()
+        editor.set_search_selections([sel])
+
+        total = editor.extraSelections()
+        assert len(total) == 2  # current line + 1 search
+        assert len(editor._search_selections) == 1
+
+    def test_clear_search_selections_keeps_current_line(self, editor):
+        """clear_search_selections removes search but keeps current-line."""
+        from PySide6.QtWidgets import QTextEdit
+        from PySide6.QtGui import QTextCharFormat
+
+        editor.setPlainText("test")
+        editor._highlight_current_line()
+
+        sel = QTextEdit.ExtraSelection()
+        sel.cursor = editor.textCursor()
+        sel.format = QTextCharFormat()
+        editor.set_search_selections([sel])
+        assert len(editor.extraSelections()) == 2
+
+        editor.clear_search_selections()
+        assert len(editor._search_selections) == 0
+        # Current-line selection should remain
+        assert len(editor.extraSelections()) == 1
+
+    def test_cached_gutter_width(self, editor):
+        """Gutter width is cached and only recomputed on block count changes."""
+        editor.setPlainText("line1\nline2")
+        w1 = editor.line_number_area_width()
+        w2 = editor.line_number_area_width()
+        assert w1 == w2
+        assert w1 == editor._cached_gutter_width
+
+
+class TestIncrementalLoading:
+    """Tests for time-budgeted incremental file loading."""
+
+    def test_incremental_load_sets_readonly_during_load(self, pane):
+        """Editor is read-only during incremental load."""
+        content = "x" * 500_000
+        pane._load_content_chunked(content)
+        assert pane._editor.isReadOnly()
+        # Drain
+        while pane._load_timer is not None:
+            pane._load_step()
+        assert not pane._editor.isReadOnly()
+
+    def test_incremental_load_callback(self, pane):
+        """on_done callback is called when load finishes."""
+        called = [False]
+        def on_done():
+            called[0] = True
+
+        content = "y" * 300_000
+        pane._load_content_chunked(content, on_done=on_done)
+        while pane._load_timer is not None:
+            pane._load_step()
+        assert called[0]
+
+    def test_cancel_incremental_load_on_tab_switch(self, pane):
+        """Switching tabs cancels any in-progress incremental load."""
+        doc1 = pane.add_new_document()
+        pane._load_content_chunked("z" * 500_000)
+        assert pane._load_timer is not None
+
+        doc2 = pane.add_new_document()
+        # _restore_document_state should have cancelled the load
+        assert pane._load_timer is None
+
+
+class TestVirtualDocumentWindowSize:
+    """Tests for reduced virtual document window size."""
+
+    def test_window_size_is_2000(self):
+        """Virtual window is 2000 lines."""
+        from editor.virtual_document import VirtualDocumentController
+        assert VirtualDocumentController.WINDOW == 2000
+
+    def test_swap_timer_interval_is_16ms(self):
+        """Swap timer coalesces to 16ms."""
+        from editor.virtual_document import VirtualDocumentController
+        vc = VirtualDocumentController()
+        assert vc._swap_timer.interval() == 16
+
+
+class TestVirtualThreshold:
+    """Tests for lowered virtualisation threshold."""
+
+    def test_virtual_threshold_is_2mb(self):
+        """Virtual threshold is 2MB."""
+        pane = EditorPane()
+        assert pane._VIRTUAL_THRESHOLD == 2_000_000
+        pane.deleteLater()

@@ -281,6 +281,22 @@ class TestIdleDetection:
         assert frame_timer._idle_timer.isSingleShot()
 
 
+class TestDisplayLayout:
+    """Test that the label is wide enough to show all stats."""
+
+    def test_widget_fixed_width(self, frame_timer):
+        assert frame_timer.width() >= 420
+
+    def test_full_text_visible_after_update(self, frame_timer):
+        frame_timer._record_frame(12.3)
+        frame_timer._update_display()
+        text = frame_timer._label.text()
+        assert "Frame:" in text
+        assert "Avg:" in text
+        assert "Max:" in text
+        assert "N:" in text
+
+
 class TestDisplayFormat:
     """Test the N: count in the display."""
 

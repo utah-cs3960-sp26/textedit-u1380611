@@ -73,8 +73,8 @@ class VirtualDocumentController(QObject):
     *global* scrollbar (owned by the caller) represents the full file.
     """
 
-    WINDOW = 5000          # lines loaded into QTextDocument at a time
-    MARGIN = 1200          # swap hysteresis margin (lines)
+    WINDOW = 2000          # lines loaded into QTextDocument at a time
+    MARGIN = 500           # swap hysteresis margin (lines)
     SCROLL_LINES = 3       # lines per wheel tick
 
     cursor_global_changed = Signal(int, int)  # global line (1-based), col (1-based)
@@ -92,7 +92,7 @@ class VirtualDocumentController(QObject):
 
         self._swap_timer = QTimer(self)
         self._swap_timer.setSingleShot(True)
-        self._swap_timer.setInterval(0)
+        self._swap_timer.setInterval(16)   # coalesce to once per frame
         self._swap_timer.timeout.connect(self._do_swap)
         self._pending_global_top: int | None = None
 
@@ -245,18 +245,23 @@ class VirtualDocumentController(QObject):
         self._load_window(new_start)
 
     def _on_global_scroll(self, value: int):
-        """Global scrollbar moved – translate to local scroll or request swap."""
+        """Global scrollbar moved – translate to local scroll or request swap.
+
+        Uses hysteresis (MARGIN) so small movements within the loaded window
+        are handled by the local scrollbar without a window swap.
+        """
         if self._swapping:
             return
-        # Is the target still inside the loaded window?
         local_line = value - self._window_start
-        if 0 <= local_line <= self._window_lines - self._visible_lines():
+        usable = self._window_lines - self._visible_lines()
+        if 0 <= local_line <= usable:
             self._scroll_local(local_line)
-        else:
-            # Need window swap
-            self._pending_global_top = value
-            if not self._swap_timer.isActive():
-                self._swap_timer.start()
+            return
+
+        # Need window swap — coalesce via timer
+        self._pending_global_top = value
+        if not self._swap_timer.isActive():
+            self._swap_timer.start()
 
     def _scroll_local(self, local_line: int):
         """Scroll the editor's internal scrollbar to *local_line*."""

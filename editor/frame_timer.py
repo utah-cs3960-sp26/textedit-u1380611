@@ -71,7 +71,7 @@ class FrameTimer(QWidget):
             " font-family: monospace; font-size: 11px; }"
         )
         layout.addWidget(self._label)
-        self.setFixedHeight(24)
+        self.setFixedSize(420, 24)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
     # ── Public API ───────────────────────────────────────────────────

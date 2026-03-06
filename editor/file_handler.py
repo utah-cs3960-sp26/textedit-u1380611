@@ -5,7 +5,6 @@ Handles all file I/O operations with proper error handling.
 Separated from UI logic for testability and modularity.
 """
 
-import mmap
 import os
 from dataclasses import dataclass
 from enum import Enum
@@ -40,14 +39,10 @@ class SaveResult:
 class FileHandler:
     """Handles file read/write operations with UTF-8 encoding."""
     
-    _MMAP_THRESHOLD = 1_000_000  # 1 MB
-    
     @staticmethod
     def read_file(file_path: str) -> FileResult:
         """
         Read a text file and return its contents.
-        
-        Uses mmap for files larger than 1 MB for better performance.
         
         Args:
             file_path: Path to the file to read.
@@ -68,12 +63,7 @@ class FileHandler:
             if file_size == 0:
                 return FileResult(success=True, content="")
             
-            if file_size > FileHandler._MMAP_THRESHOLD:
-                with open(path, 'rb') as f:
-                    with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-                        content = mm[:].decode('utf-8')
-            else:
-                content = path.read_text(encoding="utf-8")
+            content = path.read_text(encoding="utf-8")
             
             return FileResult(success=True, content=content)
             

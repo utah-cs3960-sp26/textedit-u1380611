@@ -70,6 +70,12 @@ class LineNumberedEditor(QPlainTextEdit):
         # Wheel-event callback for virtualised scrolling
         self._virtual_wheel_handler = None
         
+        # Unified extra-selection ownership: current-line + search highlights
+        self._current_line_selection: QTextEdit.ExtraSelection | None = None
+        self._search_selections: list = []
+        self._last_current_block: int = -1
+        self._cached_gutter_width: int = 40
+        
         self.blockCountChanged.connect(self._update_line_number_area_width)
         self.updateRequest.connect(self._update_line_number_area)
         self.cursorPositionChanged.connect(self._highlight_current_line)
@@ -100,19 +106,22 @@ class LineNumberedEditor(QPlainTextEdit):
         self._line_number_area.update()
     
     def line_number_area_width(self) -> int:
-        """Calculate the width needed for line numbers."""
+        """Return cached gutter width (recomputed on block-count or context change)."""
+        return self._cached_gutter_width
+
+    def _recompute_gutter_width(self):
+        """Recompute and cache the gutter width."""
         digits = 1
         max_num = max(1, self._line_number_total or self.blockCount())
         while max_num >= 10:
             max_num //= 10
             digits += 1
-        
-        space = 3 + self.fontMetrics().horizontalAdvance('9') * max(digits, 3) + 12
-        return space
-    
+        self._cached_gutter_width = 3 + self.fontMetrics().horizontalAdvance('9') * max(digits, 3) + 12
+
     def _update_line_number_area_width(self, _):
         """Update the viewport margins to accommodate line numbers."""
-        self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
+        self._recompute_gutter_width()
+        self.setViewportMargins(self._cached_gutter_width, 0, 0, 0)
     
     def _update_line_number_area(self, rect: QRect, dy: int):
         """Update the line number area when scrolling or text changes."""
@@ -130,20 +139,42 @@ class LineNumberedEditor(QPlainTextEdit):
             QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height())
         )
     
+    def set_search_selections(self, selections: list):
+        """Set search-highlight extra selections (owned by find dialog)."""
+        self._search_selections = selections
+        self._apply_extra_selections()
+
+    def clear_search_selections(self):
+        """Remove all search-highlight extra selections."""
+        self._search_selections = []
+        self._apply_extra_selections()
+
     def _highlight_current_line(self):
-        """Highlight the current line."""
-        extra_selections = []
-        
+        """Highlight the current line (skip if only column changed)."""
+        block = self.textCursor().blockNumber()
+        if block == self._last_current_block:
+            return
+        self._last_current_block = block
+
+        self._current_line_selection = None
         if not self.isReadOnly():
-            selection = QTextEdit.ExtraSelection()
-            selection.format.setBackground(self._current_line_bg)
-            selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+            sel = QTextEdit.ExtraSelection()
+            sel.format.setBackground(self._current_line_bg)
+            sel.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
             cursor = self.textCursor()
             cursor.clearSelection()
-            selection.cursor = cursor
-            extra_selections.append(selection)
-        
-        self.setExtraSelections(extra_selections)
+            sel.cursor = cursor
+            self._current_line_selection = sel
+
+        self._apply_extra_selections()
+
+    def _apply_extra_selections(self):
+        """Combine current-line and search selections into one setExtraSelections call."""
+        selections = []
+        if self._current_line_selection is not None:
+            selections.append(self._current_line_selection)
+        selections.extend(self._search_selections)
+        super().setExtraSelections(selections)
     
     def line_number_area_paint_event(self, event):
         """Paint the line numbers."""

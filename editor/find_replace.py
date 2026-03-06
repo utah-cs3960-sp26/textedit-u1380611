@@ -6,6 +6,7 @@ Provides find/replace functionality for single documents and across open tabs.
 
 import bisect
 import re
+import threading
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 from PySide6.QtWidgets import (
@@ -112,13 +113,22 @@ class FindReplaceEngine:
         return matches
     
     @staticmethod
-    def find_positions(content: str, query: str, case_sensitive: bool = False) -> List[Tuple[int, int]]:
-        """Fast search returning only (start, end) position tuples. No line info."""
+    def find_positions(content: str, query: str, case_sensitive: bool = False,
+                       generation: int = 0, generation_ref: list | None = None) -> List[Tuple[int, int]]:
+        """Fast search returning only (start, end) position tuples. No line info.
+
+        If *generation_ref* is provided, the search checks
+        ``generation_ref[0] == generation`` periodically and aborts early
+        (returning partial results) when it becomes stale.
+        """
         if not query:
             return []
-        
+
+        # How often to check cancellation (every N matches)
+        _CANCEL_CHECK = 5000
+
         if case_sensitive:
-            positions = []
+            positions: List[Tuple[int, int]] = []
             pos = 0
             qlen = len(query)
             while True:
@@ -127,12 +137,19 @@ class FindReplaceEngine:
                     break
                 positions.append((idx, idx + qlen))
                 pos = idx + 1
+                if generation_ref is not None and len(positions) % _CANCEL_CHECK == 0:
+                    if generation_ref[0] != generation:
+                        return positions
             return positions
         else:
-            # Use re.finditer with IGNORECASE to avoid content.lower() copy
-            # which doubles memory usage for large files
             pattern = re.compile(re.escape(query), re.IGNORECASE)
-            return [(m.start(), m.end()) for m in pattern.finditer(content)]
+            positions = []
+            for m in pattern.finditer(content):
+                positions.append((m.start(), m.end()))
+                if generation_ref is not None and len(positions) % _CANCEL_CHECK == 0:
+                    if generation_ref[0] != generation:
+                        return positions
+            return positions
     
     @staticmethod
     def replace_all(content: str, query: str, replacement: str, 
@@ -169,9 +186,11 @@ class FindReplaceEngine:
 class FindReplaceDialog(QDialog):
     """
     Dialog for find and replace in the current document.
+    Search runs in a background thread so the editor stays interactive.
     """
     
     _SEARCH_DEBOUNCE_MS = 300
+    _POLL_MS = 30  # how often to check if the bg search finished
 
     def __init__(self, editor: QPlainTextEdit, parent=None, content_provider=None):
         super().__init__(parent)
@@ -186,14 +205,28 @@ class FindReplaceDialog(QDialog):
         self._current_format.setBackground(QBrush(QColor(255, 165, 0, 150)))
         self._extra_selections = []
         
+        # Background search state
+        self._search_generation: int = 0      # incremented on each new search
+        self._generation_ref: list = [0]      # mutable ref shared with bg thread
+        self._bg_thread: threading.Thread | None = None
+        self._bg_result: List[Tuple[int, int]] | None = None
+        self._bg_done = threading.Event()
+        self._searching = False
+        self._replace_poll_timer: QTimer | None = None
+        self._replace_gen: int = 0
+        
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(self._SEARCH_DEBOUNCE_MS)
         self._search_timer.timeout.connect(self._do_deferred_search)
         
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(self._POLL_MS)
+        self._poll_timer.timeout.connect(self._poll_search)
+        
         self._scroll_highlight_timer = QTimer(self)
         self._scroll_highlight_timer.setSingleShot(True)
-        self._scroll_highlight_timer.setInterval(0)
+        self._scroll_highlight_timer.setInterval(16)
         self._scroll_highlight_timer.timeout.connect(self._update_highlights)
         
         self._setup_ui()
@@ -297,26 +330,30 @@ class FindReplaceDialog(QDialog):
         """Debounce search: restart timer on each keystroke."""
         if not self.query:
             self._search_timer.stop()
+            self._cancel_bg_search()
             self._matches = []
             self._match_starts = []
             self._current_match_index = -1
             self._status_label.setText("Enter search text")
             self._clear_highlights()
             return
-        self._status_label.setText("Searching...")
+        self._status_label.setText("Searching…")
         self._search_timer.start()
     
     def _do_deferred_search(self):
-        """Run the actual search after the debounce delay."""
+        """Kick off a background search after the debounce delay."""
         self._search_timer.stop()
-        self._search()
-        self._update_highlights()
+        self._start_bg_search()
     
     def _ensure_search_complete(self):
-        """If a debounced search is pending, run it immediately."""
+        """If a search is pending or running, block until it finishes."""
         if self._search_timer.isActive():
             self._search_timer.stop()
-            self._do_deferred_search()
+            self._start_bg_search()
+        # If a background thread exists, wait for it and collect results
+        if self._bg_thread is not None:
+            self._bg_done.wait()
+            self._poll_search()  # collect result
     
     def _get_content(self):
         """Get searchable content, using cache when available."""
@@ -326,12 +363,64 @@ class FindReplaceDialog(QDialog):
                 return cached
         return self._editor.toPlainText()
 
-    def _search(self):
-        """Perform the search and populate matches."""
+    # ── Background search machinery ──────────────────────────────────
+
+    def _cancel_bg_search(self):
+        """Invalidate any in-progress background search."""
+        self._search_generation += 1
+        self._generation_ref[0] = self._search_generation
+        self._poll_timer.stop()
+        self._searching = False
+
+    def _start_bg_search(self):
+        """Launch find_positions in a background thread."""
+        self._cancel_bg_search()
+        query = self.query
+        if not query:
+            self._apply_search_results([])
+            return
+
         content = self._get_content()
-        self._matches = FindReplaceEngine.find_positions(content, self.query, self.case_sensitive)
-        self._match_starts = [m[0] for m in self._matches]
-        
+        case_sensitive = self.case_sensitive
+        gen = self._search_generation
+        self._generation_ref[0] = gen
+        self._bg_done.clear()
+        self._bg_result = None
+        self._searching = True
+        self._status_label.setText("Searching…")
+
+        gen_ref = self._generation_ref
+
+        def _worker():
+            result = FindReplaceEngine.find_positions(
+                content, query, case_sensitive,
+                generation=gen, generation_ref=gen_ref,
+            )
+            if gen_ref[0] == gen:
+                self._bg_result = result
+            self._bg_done.set()
+
+        self._bg_thread = threading.Thread(target=_worker, daemon=True)
+        self._bg_thread.start()
+        self._poll_timer.start()
+
+    def _poll_search(self):
+        """Check whether the background search has finished."""
+        if not self._bg_done.is_set():
+            return
+        self._poll_timer.stop()
+        self._searching = False
+        result = self._bg_result
+        self._bg_result = None
+        self._bg_thread = None
+        if result is None:
+            return  # generation was superseded
+        self._apply_search_results(result)
+
+    def _apply_search_results(self, positions: List[Tuple[int, int]]):
+        """Apply results produced by the background thread to the UI."""
+        self._matches = positions
+        self._match_starts = [m[0] for m in positions]
         if not self._matches:
             self._current_match_index = -1
             if self.query:
@@ -345,6 +434,7 @@ class FindReplaceDialog(QDialog):
             if idx < len(self._matches):
                 self._current_match_index = idx
             self._update_status()
+        self._update_highlights()
     
     def _update_status(self):
         """Update the status label."""
@@ -353,17 +443,19 @@ class FindReplaceDialog(QDialog):
                 f"Match {self._current_match_index + 1} of {len(self._matches)}"
             )
     
-    _HIGHLIGHT_ALL_THRESHOLD = 1000
+    _HIGHLIGHT_ALL_THRESHOLD = 500
 
     def _update_highlights(self):
         """Update highlighting — only visible matches for large result sets."""
         self._clear_highlights()
-        
+
         if not self._matches:
             return
-        
-        matches_to_highlight = self._matches
-        
+
+        cur_match = None
+        if 0 <= self._current_match_index < len(self._matches):
+            cur_match = self._matches[self._current_match_index]
+
         if len(self._matches) > self._HIGHLIGHT_ALL_THRESHOLD:
             visible_start, visible_end = self._get_visible_range()
             if visible_start is not None:
@@ -372,25 +464,31 @@ class FindReplaceDialog(QDialog):
                 lo = max(0, lo - 2)
                 hi = min(len(self._matches), hi + 2)
                 matches_to_highlight = self._matches[lo:hi]
-        
+            else:
+                matches_to_highlight = self._matches[:50]
+        else:
+            matches_to_highlight = self._matches
+
+        doc = self._editor.document()
         selections = []
+        highlight_fmt = self._highlight_format
+        current_fmt = self._current_format
+
         for start, end in matches_to_highlight:
-            cursor = self._editor.textCursor()
+            cursor = QTextCursor(doc)
             cursor.setPosition(start)
             cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-            
-            selection = QTextEdit.ExtraSelection()
-            selection.cursor = cursor
-            if (self._current_match_index >= 0 and
-                self._current_match_index < len(self._matches) and
-                self._matches[self._current_match_index] == (start, end)):
-                selection.format = self._current_format
-            else:
-                selection.format = self._highlight_format
-            selections.append(selection)
-        
+
+            sel = QTextEdit.ExtraSelection()
+            sel.cursor = cursor
+            sel.format = current_fmt if (start, end) == cur_match else highlight_fmt
+            selections.append(sel)
+
         self._extra_selections = selections
-        self._editor.setExtraSelections(selections)
+        if hasattr(self._editor, 'set_search_selections'):
+            self._editor.set_search_selections(selections)
+        else:
+            self._editor.setExtraSelections(selections)
     
     def _get_visible_range(self):
         """Get the character position range visible in the viewport."""
@@ -416,7 +514,10 @@ class FindReplaceDialog(QDialog):
     
     def _clear_highlights(self):
         """Clear all search highlights."""
-        self._editor.setExtraSelections([])
+        if hasattr(self._editor, 'clear_search_selections'):
+            self._editor.clear_search_selections()
+        else:
+            self._editor.setExtraSelections([])
         self._extra_selections = []
     
     def _find_next(self):
@@ -467,38 +568,62 @@ class FindReplaceDialog(QDialog):
             sel_end = cursor.selectionEnd()
             if sel_start == start and sel_end == end:
                 cursor.insertText(self.replacement)
-                self._search()
-                self._update_highlights()
-                if self._matches:
-                    self._goto_current_match()
+                self._start_bg_search()
                 return
         
         self._goto_current_match()
     
+    _REPLACE_CHUNK = 500_000  # characters per chunk when rebuilding document
+
     def _replace_all(self):
-        """Replace all matches."""
+        """Replace all matches.
+
+        For bulk replacements (>1000 matches) on large documents, the string
+        replacement is done in a background thread and the document is rebuilt
+        in chunks so the GUI stays responsive.
+        """
         self._ensure_search_complete()
         if not self._matches:
             return
-        
+
         count = len(self._matches)
-        
+
         if count > 1000:
             content = self._get_content()
-            new_content, replaced = FindReplaceEngine.replace_all(
-                content, self.query, self.replacement, self.case_sensitive
+            query = self.query
+            replacement = self.replacement
+            case_sensitive = self.case_sensitive
+
+            self._status_label.setText("Replacing…")
+            self._replace_all_btn.setEnabled(False)
+            self._find_next_btn.setEnabled(False)
+            self._find_prev_btn.setEnabled(False)
+            self._replace_btn.setEnabled(False)
+
+            self._cancel_bg_search()
+            gen = self._search_generation
+            self._replace_gen = gen
+
+            self._bg_done.clear()
+            self._bg_result = None
+
+            def _worker():
+                result = FindReplaceEngine.replace_all(
+                    content, query, replacement, case_sensitive
+                )
+                if self._search_generation == gen:
+                    self._bg_result = result
+                self._bg_done.set()
+
+            self._bg_thread = threading.Thread(target=_worker, daemon=True)
+            self._bg_thread.start()
+
+            self._replace_poll_timer = QTimer(self)
+            self._replace_poll_timer.setInterval(self._POLL_MS)
+            self._replace_poll_timer.timeout.connect(
+                lambda: self._poll_replace_all(gen)
             )
-            if replaced > 0:
-                # Disable updates and undo during bulk replace to minimize GUI stalls
-                self._editor.setUpdatesEnabled(False)
-                doc = self._editor.document()
-                doc.setUndoRedoEnabled(False)
-                self._editor.setPlainText(new_content)
-                doc.setUndoRedoEnabled(True)
-                self._editor.setUpdatesEnabled(True)
-            self._search()
-            self._update_highlights()
-            self._status_label.setText(f"Replaced {replaced} occurrence(s)")
+            self._replace_poll_timer.start()
         else:
             cursor = self._editor.textCursor()
             cursor.beginEditBlock()
@@ -507,9 +632,98 @@ class FindReplaceDialog(QDialog):
                 cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
                 cursor.insertText(self.replacement)
             cursor.endEditBlock()
-            self._search()
-            self._update_highlights()
             self._status_label.setText(f"Replaced {count} occurrence(s)")
+            self._start_bg_search()
+
+    def _ensure_replace_complete(self):
+        """Block until any pending background replace-all finishes (for tests)."""
+        if self._bg_thread is not None and self._replace_poll_timer is not None:
+            self._bg_done.wait()
+            self._poll_replace_all(self._replace_gen)
+        # Also drain any incremental content load timer
+        if hasattr(self, '_rc_timer') and self._rc_timer is not None:
+            while self._rc_timer is not None:
+                self._rc_step()
+
+    def _poll_replace_all(self, gen: int):
+        """Check if the background replace-all has finished."""
+        if not self._bg_done.is_set():
+            return
+        self._replace_poll_timer.stop()
+        self._replace_poll_timer.deleteLater()
+        self._replace_poll_timer = None
+        self._bg_thread = None
+
+        result = self._bg_result
+        self._bg_result = None
+
+        self._replace_all_btn.setEnabled(True)
+        self._find_next_btn.setEnabled(True)
+        self._find_prev_btn.setEnabled(True)
+        self._replace_btn.setEnabled(True)
+
+        if result is None or self._search_generation != gen:
+            self._status_label.setText("Replace cancelled")
+            return
+
+        new_content, replaced = result
+        if replaced > 0:
+            self._apply_replaced_content(new_content)
+        self._status_label.setText(f"Replaced {replaced} occurrence(s)")
+        self._start_bg_search()
+
+    _REPLACE_LOAD_CHUNK = 128_000
+    _REPLACE_BUDGET_MS = 8
+
+    def _apply_replaced_content(self, new_content: str):
+        """Load *new_content* into the editor incrementally to avoid stalls."""
+        from PySide6.QtCore import QElapsedTimer as _QET
+
+        doc = self._editor.document()
+        doc.blockSignals(True)
+        self._editor.blockSignals(True)
+        self._editor.setUpdatesEnabled(False)
+        self._editor.setReadOnly(True)
+        doc.setUndoRedoEnabled(False)
+
+        doc.clear()
+        cursor = QTextCursor(doc)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+
+        self._rc_text = new_content
+        self._rc_offset = 0
+        self._rc_cursor = cursor
+
+        self._rc_timer = QTimer(self)
+        self._rc_timer.setInterval(0)
+        self._rc_timer.timeout.connect(self._rc_step)
+        self._rc_timer.start()
+
+    def _rc_step(self):
+        """Insert replacement content in time-budgeted chunks."""
+        from PySide6.QtCore import QElapsedTimer as _QET
+        elapsed = _QET()
+        elapsed.start()
+        total = len(self._rc_text)
+        chunk = self._REPLACE_LOAD_CHUNK
+
+        while self._rc_offset < total and elapsed.elapsed() < self._REPLACE_BUDGET_MS:
+            end = min(self._rc_offset + chunk, total)
+            self._rc_cursor.insertText(self._rc_text[self._rc_offset:end])
+            self._rc_offset = end
+
+        if self._rc_offset >= total:
+            self._rc_timer.stop()
+            self._rc_timer.deleteLater()
+            self._rc_timer = None
+            doc = self._editor.document()
+            doc.setUndoRedoEnabled(True)
+            self._editor.setUpdatesEnabled(True)
+            self._editor.setReadOnly(False)
+            self._editor.blockSignals(False)
+            doc.blockSignals(False)
+            self._rc_text = None
+            self._rc_cursor = None
     
     def _on_viewport_scrolled(self, rect, dy):
         """Coalesce highlight refresh when viewport scrolls."""
@@ -519,11 +733,13 @@ class FindReplaceDialog(QDialog):
     
     def closeEvent(self, event):
         """Clear highlights when closing."""
+        self._cancel_bg_search()
         self._clear_highlights()
         super().closeEvent(event)
     
     def hideEvent(self, event):
         """Clear highlights when hiding."""
+        self._cancel_bg_search()
         self._clear_highlights()
         super().hideEvent(event)
 
@@ -535,11 +751,24 @@ class MultiFileFindDialog(QDialog):
     
     goto_match_requested = Signal(object, int)  # document, position
     
+    _POLL_MS = 30
+
     def __init__(self, get_documents_func, get_pane_func, parent=None):
         super().__init__(parent)
         self._get_documents = get_documents_func
         self._get_pane = get_pane_func
         self._results: List[DocumentMatches] = []
+        
+        # Background search state
+        self._bg_thread: threading.Thread | None = None
+        self._bg_result: List[DocumentMatches] | None = None
+        self._bg_done = threading.Event()
+        self._bg_done.set()
+        self._search_generation: int = 0
+        
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(self._POLL_MS)
+        self._poll_timer.timeout.connect(self._poll_search)
         
         self._setup_ui()
         self.setWindowTitle("Find in Open Files")
@@ -625,49 +854,95 @@ class MultiFileFindDialog(QDialog):
         return self._case_checkbox.isChecked()
     
     def _do_search(self):
-        """Perform search across all open documents."""
+        """Perform search across all open documents in a background thread."""
         self._result_tree.clear()
         self._results = []
+        self._replace_all_btn.setEnabled(False)
         
         if not self.query:
             self._status_label.setText("Enter search text")
-            self._replace_all_btn.setEnabled(False)
             return
         
+        # Sync editor content on the main thread before searching
         documents = self._get_documents()
-        total_matches = 0
-        docs_with_matches = 0
-        
+        doc_contents: List[Tuple["Document", str]] = []
         for doc in documents:
             pane = self._get_pane(doc)
             if pane:
                 pane.sync_from_editor()
+            doc_contents.append((doc, doc.content))
+        
+        query = self.query
+        case_sensitive = self.case_sensitive
+        self._search_generation += 1
+        gen = self._search_generation
+        self._bg_done.clear()
+        self._bg_result = None
+        self._status_label.setText("Searching…")
+        self._search_btn.setEnabled(False)
+        
+        def _worker():
+            results: List[DocumentMatches] = []
+            for doc, content in doc_contents:
+                if self._search_generation != gen:
+                    break
+                matches = FindReplaceEngine.find_all(content, query, case_sensitive)
+                if matches:
+                    results.append(DocumentMatches(document=doc, matches=matches))
+            if self._search_generation == gen:
+                self._bg_result = results
+            self._bg_done.set()
+        
+        self._bg_thread = threading.Thread(target=_worker, daemon=True)
+        self._bg_thread.start()
+        self._poll_timer.start()
+    
+    def _poll_search(self):
+        """Check whether the background multi-file search has finished."""
+        if not self._bg_done.is_set():
+            return
+        self._poll_timer.stop()
+        self._search_btn.setEnabled(True)
+        result = self._bg_result
+        self._bg_result = None
+        self._bg_thread = None
+        if result is None:
+            return
+        self._apply_search_results(result)
+    
+    def _ensure_search_complete(self):
+        """Block until any pending background search finishes (for tests)."""
+        if self._bg_thread is not None:
+            self._bg_done.wait()
+            self._poll_search()
+    
+    def _apply_search_results(self, results: List[DocumentMatches]):
+        """Populate the tree with results produced by the background thread."""
+        self._results = results
+        total_matches = 0
+        docs_with_matches = 0
+        
+        for doc_matches in results:
+            doc = doc_matches.document
+            total_matches += doc_matches.count
+            docs_with_matches += 1
             
-            content = doc.content
-            matches = FindReplaceEngine.find_all(content, self.query, self.case_sensitive)
+            doc_name = doc.file_name
+            doc_path = doc.file_path or ""
+            doc_item = QTreeWidgetItem([doc_name, "", doc_path])
+            doc_item.setData(0, Qt.ItemDataRole.UserRole, ("doc", doc, None))
+            self._result_tree.addTopLevelItem(doc_item)
             
-            if matches:
-                doc_matches = DocumentMatches(document=doc, matches=matches)
-                self._results.append(doc_matches)
-                total_matches += len(matches)
-                docs_with_matches += 1
+            for match in doc_matches.matches:
+                preview = match.line_text.strip()
+                if len(preview) > 80:
+                    preview = preview[:77] + "..."
                 
-                doc_name = doc.file_name
-                doc_path = doc.file_path or ""
-                doc_item = QTreeWidgetItem([doc_name, "", doc_path])
-                doc_item.setData(0, Qt.ItemDataRole.UserRole, ("doc", doc, None))
-                self._result_tree.addTopLevelItem(doc_item)
-                
-                for match in matches:
-                    preview = match.line_text.strip()
-                    if len(preview) > 80:
-                        preview = preview[:77] + "..."
-                    
-                    match_item = QTreeWidgetItem(["", str(match.line_number), preview])
-                    match_item.setData(0, Qt.ItemDataRole.UserRole, ("match", doc, match))
-                    doc_item.addChild(match_item)
-                
-                doc_item.setExpanded(True)
+                match_item = QTreeWidgetItem(["", str(match.line_number), preview])
+                match_item.setData(0, Qt.ItemDataRole.UserRole, ("match", doc, match))
+                doc_item.addChild(match_item)
+            
+            doc_item.setExpanded(True)
         
         if total_matches == 0:
             self._status_label.setText("No matches found")

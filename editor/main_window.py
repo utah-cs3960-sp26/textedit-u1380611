@@ -479,7 +479,8 @@ class MainWindow(QMainWindow):
         
         if result.success:
             content = result.content
-            is_html = content.strip().startswith('<!DOCTYPE') or content.strip().startswith('<html')
+            head = content[:1024].lstrip()
+            is_html = head.startswith('<!DOCTYPE') or head.startswith('<html')
             
             if is_html:
                 doc = Document(content="", file_path=file_path)
@@ -788,7 +789,8 @@ class MainWindow(QMainWindow):
         
         if result.success:
             content = result.content
-            is_html = content.strip().startswith('<!DOCTYPE') or content.strip().startswith('<html')
+            head = content[:1024].lstrip()
+            is_html = head.startswith('<!DOCTYPE') or head.startswith('<html')
             
             if is_html:
                 doc = Document(content="", file_path=file_path)
@@ -907,7 +909,7 @@ class MainWindow(QMainWindow):
         """Position the frame timer at the top-right of the central widget."""
         cw = self.centralWidget()
         if cw:
-            fw = self._frame_timer.sizeHint().width()
+            fw = self._frame_timer.width()
             self._frame_timer.move(cw.width() - fw - 8, 4)
             self._frame_timer.raise_()
 

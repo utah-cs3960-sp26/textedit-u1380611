@@ -38,6 +38,7 @@ class TestLine350Coverage:
         dialog._find_edit.setText("cat")
         dialog._replace_edit.setText("dog")
         dialog._do_deferred_search()
+        dialog._ensure_search_complete()
         
         # Verify we have 3 matches
         assert len(dialog._matches) == 3
@@ -58,6 +59,7 @@ class TestLine350Coverage:
         # 5. Execute line 350: index wraps to 0
         
         dialog._replace_current()
+        dialog._ensure_search_complete()
         
         # After replace, should have wrapped to index 0
         assert dialog._current_match_index == 0
@@ -74,6 +76,7 @@ class TestLine350Coverage:
         dialog._find_edit.setText("cat")
         dialog._replace_edit.setText("dog")
         dialog._do_deferred_search()
+        dialog._ensure_search_complete()
         
         assert len(dialog._matches) == 2
         
@@ -83,6 +86,7 @@ class TestLine350Coverage:
         
         # Replace the last occurrence
         dialog._replace_current()
+        dialog._ensure_search_complete()
         
         # Now we have only 1 "cat" match, and current_match_index = 1
         # 1 >= 1 is TRUE, so should wrap
